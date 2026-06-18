@@ -279,7 +279,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
         } else if (target == "singbox" || target == "sing-box") {
             out_payload = gen_singbox(all_proxies);
         } else {
-            out_payload = "RAW merge not supported for arbitrary formats."; 
+            out_payload = gen_v2ray(all_proxies);
         }
 
         std::string hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " + std::to_string(out_payload.length()) + "\r\nConnection: close\r\n\r\n";

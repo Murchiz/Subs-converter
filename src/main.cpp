@@ -373,7 +373,7 @@ void run_convert(int argc, char **argv) {
         } else if (target == "singbox" || target == "sing-box") {
             out_payload = gen_singbox(all_proxies);
         } else {
-            out_payload = "RAW merge not supported for arbitrary formats."; 
+            out_payload = gen_v2ray(all_proxies);
         }
         
         FILE *f = fopen(outfile.c_str(), "wb");

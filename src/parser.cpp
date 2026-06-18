@@ -1,6 +1,7 @@
 #include "parser.h"
 #include "utils.h"
 #include <string.h>
+
 Proxy parse_uri(const std::string& uri) {
     Proxy p = {0};
     size_t scheme_pos = uri.find("://");
@@ -61,19 +62,29 @@ Proxy parse_uri(const std::string& uri) {
                     else if (k == "obfs-password") strcpy(p.obfs_pass, v.c_str());
                     else if (k == "up") strcpy(p.up, v.c_str());
                     else if (k == "down") strcpy(p.down, v.c_str());
-                    else if (k != "type" && k != "security" && k != "sni" && k != "fp" && k != "pbk" && k != "sid" && k != "host" && k != "path" && k != "alpn" && k != "serviceName" && k != "mode" && k != "flow" && k != "uuid" && k != "port" && k != "name" && k != "encryption" && k != "headerType" && k != "extra" && k != "obfs" && k != "obfs-password" && k != "up" && k != "down") {
+                    else if (k == "extra") {
+                        strncpy(p.extra, v.c_str(), sizeof(p.extra) - 1);
+                    }
+                    else if (k != "type" && k != "security" && k != "sni" && k != "fp" && k != "pbk" && k != "sid" && k != "host" && k != "path" && k != "alpn" && k != "serviceName" && k != "mode" && k != "flow" && k != "uuid" && k != "port" && k != "name" && k != "encryption" && k != "headerType" && k != "obfs" && k != "obfs-password" && k != "up" && k != "down") {
                         std::string kebab;
                         for (char c : k) {
                             if (isupper(c)) { kebab += '-'; kebab += tolower(c); }
                             else kebab += c;
                         }
-                        std::string line = "      " + kebab + ": ";
+                        std::string v_json;
                         if (v == "true" || v == "false" || (v.length() > 0 && v.find_first_not_of("0123456789-") == std::string::npos)) {
-                            line += v + "\n";
+                            v_json = v;
                         } else {
-                            line += "'" + v + "'\n";
+                            v_json = "\"" + sanitize_json(v) + "\"";
                         }
-                        strncat(p.extra, line.c_str(), sizeof(p.extra) - strlen(p.extra) - 1);
+                        
+                        if (p.extra[0] == '\0') {
+                            strcpy(p.extra, "{");
+                        } else {
+                            p.extra[strlen(p.extra) - 1] = ',';
+                        }
+                        std::string kv_json = "\"" + kebab + "\":" + v_json + "}";
+                        strncat(p.extra, kv_json.c_str(), sizeof(p.extra) - strlen(p.extra) - 1);
                     }
                 }
                 start = amp + 1;
@@ -120,6 +131,7 @@ Proxy parse_uri(const std::string& uri) {
     }
     return p;
 }
+
 Proxy parse_xray_json(const std::string& obj) {
     Proxy p = {0};
     if (obj.find("\"outbounds\"") == std::string::npos) return p;
@@ -183,8 +195,30 @@ Proxy parse_xray_json(const std::string& obj) {
             }
         }
     }
+    
+    size_t extra_pos = outbound.find("\"extra\"");
+    if (extra_pos != std::string::npos) {
+        size_t b_start = outbound.find("{", extra_pos);
+        if (b_start != std::string::npos) {
+            int d = 0;
+            size_t b_end = b_start;
+            for (size_t i = b_start; i < outbound.length(); i++) {
+                if (outbound[i] == '{') d++;
+                else if (outbound[i] == '}') {
+                    d--;
+                    if (d == 0) { b_end = i; break; }
+                }
+            }
+            if (b_end > b_start) {
+                std::string extra_obj = outbound.substr(b_start, b_end - b_start + 1);
+                strncpy(p.extra, extra_obj.c_str(), sizeof(p.extra) - 1);
+            }
+        }
+    }
+    
     return p;
 }
+
 std::vector<Proxy> parse_proxies(const std::string& decoded) {
     std::vector<Proxy> proxies;
     

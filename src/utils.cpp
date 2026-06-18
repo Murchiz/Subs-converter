@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
+
 std::string base64_decode(const std::string &in) {
     std::string out;
     std::vector<int> T(256, -1);
@@ -40,6 +42,37 @@ std::string url_decode(const std::string& str) {
     return ret;
 }
 
+std::string base64_encode(const std::string &in) {
+    std::string out;
+    int val = 0, valb = -6;
+    for (unsigned char c : in) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            out.push_back("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6) out.push_back("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[((val << 8) >> (valb + 8)) & 0x3F]);
+    while (out.size() % 4) out.push_back('=');
+    return out;
+}
+
+std::string url_encode(const std::string &value) {
+    std::string escaped;
+    escaped.reserve(value.length());
+    for (char c : value) {
+        if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            escaped += c;
+        } else {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)c);
+            escaped += buf;
+        }
+    }
+    return escaped;
+}
+
 std::string json_extract_string(const std::string& json, const std::string& key) {
     size_t pos = json.find("\"" + key + "\"");
     if (pos == std::string::npos) return "";
@@ -64,6 +97,7 @@ int json_extract_int(const std::string& json, const std::string& key) {
     }
     return 0;
 }
+
 std::string sanitize_json(const std::string& str) {
     std::string res;
     for (char c : str) {

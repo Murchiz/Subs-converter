@@ -1,6 +1,7 @@
 #include "generator.h"
 #include "utils.h"
 #include <string.h>
+
 std::string gen_clash(const std::vector<Proxy>& proxies) {
     std::string out = "mixed-port: 7890\n"
                       "socks-port: 7891\n"
@@ -86,7 +87,7 @@ std::string gen_clash(const std::vector<Proxy>& proxies) {
             out += "      path: " + std::string(p.path[0] ? p.path : "/") + "\n";
             out += "      host: " + std::string(p.host[0] ? p.host : (p.sni[0] ? p.sni : p.server)) + "\n";
             if (p.mode[0]) out += "      mode: " + std::string(p.mode) + "\n";
-            if (p.extra[0]) out += std::string(p.extra);
+            if (p.extra[0]) out += "      extra: " + std::string(p.extra) + "\n";
         } else if (strcmp(p.type, "httpupgrade") == 0) {
             out += "    ws-opts:\n";
             out += "      path: " + std::string(p.path[0] ? p.path : "/") + "\n";
@@ -113,6 +114,7 @@ std::string gen_clash(const std::vector<Proxy>& proxies) {
            "  - MATCH,Proxy\n";
     return out;
 }
+
 std::string gen_singbox(const std::vector<Proxy>& proxies) {
     std::string out = "{\n"
                       "  \"dns\": {\"strategy\":\"ipv4_only\",\"rules\":[{\"server\":\"remote\",\"query_type\":[\"A\",\"AAAA\"]}],\"servers\":[{\"tag\":\"cf-dns\",\"type\":\"tls\",\"server\":\"1.1.1.1\"},{\"tag\":\"local\",\"type\":\"tcp\",\"server\":\"1.1.1.1\"},{\"tag\":\"remote\",\"type\":\"fakeip\",\"inet4_range\":\"198.18.0.0/15\",\"inet6_range\":\"fc00::/18\"}]},\n"
@@ -126,9 +128,7 @@ std::string gen_singbox(const std::vector<Proxy>& proxies) {
     for (size_t i = 0; i < proxies.size(); i++) {
         const auto& p = proxies[i];
         if (!p.protocol[0]) continue;
-        if (strcmp(p.type, "xhttp") == 0) continue; // Filter out xhttp
-        if (!p.protocol[0]) continue;
-        if (strcmp(p.type, "xhttp") == 0) continue; // Filter out xhttp
+        if (strcmp(p.type, "xhttp") == 0) continue; // Sing-box does not support xhttp
         
         if (!first) outbounds_arr += ",\n";
         first = false;
@@ -202,6 +202,9 @@ std::string gen_singbox(const std::vector<Proxy>& proxies) {
             if (strcmp(p.type, "ws") == 0 || strcmp(p.type, "httpupgrade") == 0 || strcmp(p.type, "xhttp") == 0) {
                 outbounds_arr += ",\n        \"path\": \"" + std::string(p.path[0] ? p.path : "/") + "\"";
                 outbounds_arr += ",\n        \"headers\": { \"Host\": \"" + std::string(p.host[0] ? p.host : (p.sni[0] ? p.sni : p.server)) + "\" }";
+                if (strcmp(p.type, "xhttp") == 0 && p.extra[0]) {
+                    outbounds_arr += ",\n        \"extra\": " + std::string(p.extra);
+                }
             } else if (strcmp(p.type, "grpc") == 0) {
                 outbounds_arr += ",\n        \"service_name\": \"" + std::string(p.path) + "\"";
             }
@@ -223,4 +226,45 @@ std::string gen_singbox(const std::vector<Proxy>& proxies) {
     }
     out += "\n  ]\n}\n";
     return out;
+}
+
+std::string gen_v2ray(const std::vector<Proxy>& proxies) {
+    std::string out = "";
+    for (const auto& p : proxies) {
+        if (!p.protocol[0]) continue;
+        if (strcmp(p.protocol, "vless") == 0 || strcmp(p.protocol, "trojan") == 0) {
+            std::string uri = std::string(p.protocol) + "://" + p.uuid + "@" + p.server + ":" + std::to_string(p.port) + "?";
+            if (strcmp(p.protocol, "vless") == 0) uri += "encryption=none&";
+            uri += "type=" + std::string(p.type[0] ? p.type : "tcp");
+            if (p.security[0]) uri += "&security=" + std::string(p.security);
+            if (p.sni[0]) uri += "&sni=" + std::string(p.sni);
+            if (p.fp[0]) uri += "&fp=" + std::string(p.fp);
+            if (p.pbk[0]) uri += "&pbk=" + std::string(p.pbk);
+            if (p.sid[0]) uri += "&sid=" + std::string(p.sid);
+            if (p.host[0]) uri += "&host=" + std::string(url_encode(p.host));
+            if (p.path[0]) uri += "&path=" + std::string(url_encode(p.path));
+            if (p.alpn[0]) uri += "&alpn=" + std::string(url_encode(p.alpn));
+            if (p.flow[0]) uri += "&flow=" + std::string(p.flow);
+            if (p.extra[0]) uri += "&extra=" + std::string(url_encode(p.extra));
+            
+            if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
+            
+            uri += "#" + std::string(url_encode(p.name));
+            out += uri + "\n";
+        }
+        else if (strcmp(p.protocol, "vmess") == 0) {
+            std::string json = "{\"v\":\"2\",\"ps\":\"" + std::string(p.name) + "\",\"add\":\"" + std::string(p.server) + "\",\"port\":\"" + std::to_string(p.port) + "\",\"id\":\"" + std::string(p.uuid) + "\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"" + std::string(p.type[0] ? p.type : "tcp") + "\",\"type\":\"none\",\"host\":\"" + std::string(p.host) + "\",\"path\":\"" + std::string(p.path) + "\",\"tls\":\"" + std::string(p.security[0] ? p.security : "") + "\",\"sni\":\"" + std::string(p.sni) + "\",\"alpn\":\"" + std::string(p.alpn) + "\"}";
+            out += "vmess://" + base64_encode(json) + "\n";
+        }
+        else if (strcmp(p.protocol, "hysteria2") == 0) {
+            std::string uri = "hysteria2://" + std::string(p.uuid) + "@" + p.server + ":" + std::to_string(p.port) + "?";
+            if (p.sni[0]) uri += "sni=" + std::string(p.sni) + "&";
+            if (p.obfs[0]) uri += "obfs=" + std::string(p.obfs) + "&";
+            if (p.obfs_pass[0]) uri += "obfs-password=" + std::string(p.obfs_pass) + "&";
+            if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
+            uri += "#" + std::string(url_encode(p.name));
+            out += uri + "\n";
+        }
+    }
+    return base64_encode(out);
 }
