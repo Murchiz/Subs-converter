@@ -8,7 +8,7 @@
 
 #define SVC_NAME     "SubBridge"
 #define SVC_DISPLAY  "Subscription Converter Bridge"
-#define UA_WIDE      L"v2rayN/6.23"
+#define UA_WIDE      L"Happ/3.23.0"
 
 #define BODY_CAP     (2048 * 1024)
 #define UP_TIMEOUT   15000

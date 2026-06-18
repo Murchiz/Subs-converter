@@ -9,18 +9,21 @@ Proxy parse_uri(const std::string& uri) {
     std::string scheme = uri.substr(0, scheme_pos);
     strcpy(p.protocol, scheme.c_str());
 
-    if (scheme == "vless" || scheme == "trojan" || scheme == "hysteria2" || scheme == "hy2") {
+    if (scheme == "vless" || scheme == "trojan" || scheme == "hysteria2" || scheme == "hy2" || scheme == "hysteria") {
         if (scheme == "hy2") strcpy(p.protocol, "hysteria2");
         size_t at_pos = uri.find('@', scheme_pos + 3);
-        if (at_pos == std::string::npos) return p;
-        strcpy(p.uuid, uri.substr(scheme_pos + 3, at_pos - (scheme_pos + 3)).c_str());
+        size_t hostport_start = scheme_pos + 3;
+        if (at_pos != std::string::npos) {
+            strcpy(p.uuid, uri.substr(scheme_pos + 3, at_pos - (scheme_pos + 3)).c_str());
+            hostport_start = at_pos + 1;
+        }
 
-        size_t q_pos = uri.find('?', at_pos + 1);
-        size_t hash_pos = uri.find('#', at_pos + 1);
+        size_t q_pos = uri.find('?', hostport_start);
+        size_t hash_pos = uri.find('#', hostport_start);
         if (hash_pos == std::string::npos) hash_pos = uri.length();
         size_t hostport_end = (q_pos != std::string::npos && q_pos < hash_pos) ? q_pos : hash_pos;
 
-        std::string hostport = uri.substr(at_pos + 1, hostport_end - (at_pos + 1));
+        std::string hostport = uri.substr(hostport_start, hostport_end - hostport_start);
         size_t colon_pos = hostport.find(':');
         if (colon_pos != std::string::npos) {
             strcpy(p.server, hostport.substr(0, colon_pos).c_str());
@@ -46,7 +49,7 @@ Proxy parse_uri(const std::string& uri) {
 
                     if (k == "type") strcpy(p.type, v.c_str());
                     else if (k == "security") strcpy(p.security, v.c_str());
-                    else if (k == "sni") strcpy(p.sni, v.c_str());
+                    else if (k == "sni" || k == "peer") strcpy(p.sni, v.c_str());
                     else if (k == "fp") strcpy(p.fp, v.c_str());
                     else if (k == "pbk") strcpy(p.pbk, v.c_str());
                     else if (k == "sid") strcpy(p.sid, v.c_str());
@@ -59,13 +62,14 @@ Proxy parse_uri(const std::string& uri) {
                     else if (k == "encryption") strcpy(p.cipher, v.c_str());
                     else if (k == "headerType") strcpy(p.type, v.c_str());
                     else if (k == "obfs") strcpy(p.obfs, v.c_str());
-                    else if (k == "obfs-password") strcpy(p.obfs_pass, v.c_str());
-                    else if (k == "up") strcpy(p.up, v.c_str());
-                    else if (k == "down") strcpy(p.down, v.c_str());
+                    else if (k == "obfs-password" || k == "obfs-param" || k == "obfsParam" || k == "obfsparam") strcpy(p.obfs_pass, v.c_str());
+                    else if (k == "up" || k == "upmbps") strcpy(p.up, v.c_str());
+                    else if (k == "down" || k == "downmbps") strcpy(p.down, v.c_str());
+                    else if (k == "auth") strcpy(p.uuid, v.c_str());
                     else if (k == "extra") {
                         strncpy(p.extra, v.c_str(), sizeof(p.extra) - 1);
                     }
-                    else if (k != "type" && k != "security" && k != "sni" && k != "fp" && k != "pbk" && k != "sid" && k != "host" && k != "path" && k != "alpn" && k != "serviceName" && k != "mode" && k != "flow" && k != "uuid" && k != "port" && k != "name" && k != "encryption" && k != "headerType" && k != "obfs" && k != "obfs-password" && k != "up" && k != "down") {
+                    else if (k != "type" && k != "security" && k != "sni" && k != "peer" && k != "fp" && k != "pbk" && k != "sid" && k != "host" && k != "path" && k != "alpn" && k != "serviceName" && k != "mode" && k != "flow" && k != "uuid" && k != "port" && k != "name" && k != "encryption" && k != "headerType" && k != "obfs" && k != "obfs-password" && k != "obfs-param" && k != "obfsParam" && k != "obfsparam" && k != "up" && k != "upmbps" && k != "down" && k != "downmbps" && k != "auth") {
                         std::string kebab;
                         for (char c : k) {
                             if (isupper(c)) { kebab += '-'; kebab += tolower(c); }

@@ -133,21 +133,42 @@ void handle_subconverter(SOCKET c, const std::string& req) {
         internal_port = atoi(url.c_str() + 17);
     }
     
+    bool matched_route = false;
     if (internal_port > 0) {
         for (int i = 0; i < g_RouteCount; i++) {
             if (g_Routes[i].local_port == internal_port) {
                 temp_rt.url_count = g_Routes[i].url_count;
                 for (int j = 0; j < temp_rt.url_count; j++) {
                     strcpy(temp_rt.urls[j], g_Routes[i].urls[j]);
-                    if (target != "clash" && _stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0) {
-                        strcpy(temp_rt.user_agents[j], "Happ");
+                    if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
+                        strcpy(temp_rt.user_agents[j], "Happ/3.23.0");
                     } else {
                         strcpy(temp_rt.user_agents[j], g_Routes[i].user_agents[j]);
                     }
                 }
                 temp_rt.use_hwid = g_Routes[i].use_hwid;
+                matched_route = true;
                 break;
             }
+        }
+    } else {
+        // Try matching raw URL to inherit configured User-Agent
+        for (int i = 0; i < g_RouteCount; i++) {
+            for (int j = 0; j < g_Routes[i].url_count; j++) {
+                if (url == g_Routes[i].urls[j]) {
+                    temp_rt.url_count = 1;
+                    strcpy(temp_rt.urls[0], g_Routes[i].urls[j]);
+                    if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
+                        strcpy(temp_rt.user_agents[0], "Happ/3.23.0");
+                    } else {
+                        strcpy(temp_rt.user_agents[0], g_Routes[i].user_agents[j]);
+                    }
+                    temp_rt.use_hwid = g_Routes[i].use_hwid;
+                    matched_route = true;
+                    break;
+                }
+            }
+            if (matched_route) break;
         }
     }
     

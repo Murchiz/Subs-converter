@@ -45,11 +45,19 @@ std::string gen_clash(const std::vector<Proxy>& proxies) {
             out += "    up: " + std::string(p.up[0] ? p.up : "100 Mbps") + "\n";
             out += "    down: " + std::string(p.down[0] ? p.down : "100 Mbps") + "\n";
             out += "    skip-cert-verify: false\n";
+        } else if (strcmp(p.protocol, "hysteria") == 0) {
+            out += "    auth_str: " + std::string(p.uuid) + "\n";
+            if (p.sni[0]) out += "    sni: " + std::string(p.sni) + "\n";
+            if (p.obfs[0]) out += "    obfs: " + std::string(p.obfs) + "\n";
+            if (p.obfs_pass[0]) out += "    obfs-parameter: " + std::string(p.obfs_pass) + "\n";
+            out += "    up: " + std::string(p.up[0] ? p.up : "100 Mbps") + "\n";
+            out += "    down: " + std::string(p.down[0] ? p.down : "100 Mbps") + "\n";
+            out += "    skip-cert-verify: false\n";
         }
 
         std::string net = p.type;
         if (strcmp(p.type, "httpupgrade") == 0) net = "ws";
-        if (strcmp(p.protocol, "hysteria2") != 0 && p.type[0]) out += "    network: " + net + "\n";
+        if (strcmp(p.protocol, "hysteria2") != 0 && strcmp(p.protocol, "hysteria") != 0 && p.type[0]) out += "    network: " + net + "\n";
 
         if (strcmp(p.security, "tls") == 0 || strcmp(p.security, "reality") == 0) {
             out += "    tls: true\n";
@@ -164,9 +172,29 @@ std::string gen_singbox(const std::vector<Proxy>& proxies) {
                 if (p.obfs_pass[0]) outbounds_arr += ",\n        \"password\": \"" + std::string(p.obfs_pass) + "\"";
                 outbounds_arr += "\n      }";
             }
+        } else if (strcmp(p.protocol, "hysteria") == 0) {
+            outbounds_arr += "      \"auth_str\": \"" + std::string(p.uuid) + "\"";
+            outbounds_arr += ",\n      \"tls\": {\n";
+            outbounds_arr += "        \"enabled\": true";
+            if (p.sni[0]) outbounds_arr += ",\n        \"server_name\": \"" + std::string(p.sni) + "\"";
+            outbounds_arr += "\n      }";
+            if (p.obfs[0]) {
+                outbounds_arr += ",\n      \"obfs\": {\n";
+                outbounds_arr += "        \"type\": \"" + std::string(p.obfs) + "\"";
+                if (p.obfs_pass[0]) outbounds_arr += ",\n        \"password\": \"" + std::string(p.obfs_pass) + "\"";
+                outbounds_arr += "\n      }";
+            }
+            if (p.up[0]) {
+                int up_val = atoi(p.up);
+                if (up_val > 0) outbounds_arr += ",\n      \"up_mbps\": " + std::to_string(up_val);
+            }
+            if (p.down[0]) {
+                int down_val = atoi(p.down);
+                if (down_val > 0) outbounds_arr += ",\n      \"down_mbps\": " + std::to_string(down_val);
+            }
         }
 
-        if (strcmp(p.protocol, "hysteria2") != 0 && (strcmp(p.security, "tls") == 0 || strcmp(p.security, "reality") == 0)) {
+        if (strcmp(p.protocol, "hysteria2") != 0 && strcmp(p.protocol, "hysteria") != 0 && (strcmp(p.security, "tls") == 0 || strcmp(p.security, "reality") == 0)) {
             outbounds_arr += ",\n      \"tls\": {\n";
             outbounds_arr += "        \"enabled\": true";
             if (p.sni[0]) outbounds_arr += ",\n        \"server_name\": \"" + std::string(p.sni) + "\"";
@@ -196,7 +224,7 @@ std::string gen_singbox(const std::vector<Proxy>& proxies) {
             outbounds_arr += "\n      }";
         }
 
-        if (strcmp(p.protocol, "hysteria2") != 0 && p.type[0] && strcmp(p.type, "tcp") != 0) {
+        if (strcmp(p.protocol, "hysteria2") != 0 && strcmp(p.protocol, "hysteria") != 0 && p.type[0] && strcmp(p.type, "tcp") != 0) {
             outbounds_arr += ",\n      \"transport\": {\n";
             outbounds_arr += "        \"type\": \"" + std::string(p.type) + "\"";
             if (strcmp(p.type, "ws") == 0 || strcmp(p.type, "httpupgrade") == 0 || strcmp(p.type, "xhttp") == 0) {
@@ -261,6 +289,18 @@ std::string gen_v2ray(const std::vector<Proxy>& proxies) {
             if (p.sni[0]) uri += "sni=" + std::string(p.sni) + "&";
             if (p.obfs[0]) uri += "obfs=" + std::string(p.obfs) + "&";
             if (p.obfs_pass[0]) uri += "obfs-password=" + std::string(p.obfs_pass) + "&";
+            if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
+            uri += "#" + std::string(url_encode(p.name));
+            out += uri + "\n";
+        }
+        else if (strcmp(p.protocol, "hysteria") == 0) {
+            std::string uri = "hysteria://" + std::string(p.uuid) + "@" + p.server + ":" + std::to_string(p.port) + "?";
+            if (p.sni[0]) uri += "peer=" + std::string(p.sni) + "&";
+            if (p.obfs[0]) uri += "obfs=" + std::string(p.obfs) + "&";
+            if (p.obfs_pass[0]) uri += "obfsParam=" + std::string(p.obfs_pass) + "&";
+            if (p.up[0]) uri += "upmbps=" + std::string(p.up) + "&";
+            if (p.down[0]) uri += "downmbps=" + std::string(p.down) + "&";
+            if (p.alpn[0]) uri += "alpn=" + std::string(p.alpn) + "&";
             if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
             uri += "#" + std::string(url_encode(p.name));
             out += uri + "\n";
