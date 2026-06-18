@@ -4,7 +4,10 @@
 #include "generator.h"
 #include <thread>
 #include <stdio.h>
-int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int url_index) {
+int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int url_index,
+              char *out_userinfo, int userinfo_cap,
+              char *out_interval, int interval_cap,
+              char *out_disposition, int disposition_cap) {
     HINTERNET hS = NULL, hC = NULL, hR = NULL;
     int total = -1;
     char full_url[4096];
@@ -76,6 +79,31 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
         WinHttpQueryHeaders(hR, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz, WINHTTP_NO_HEADER_INDEX);
         if (code != 200) { total = -(int)code; goto out; }
+    }
+
+    if (out_userinfo && userinfo_cap > 0) {
+        out_userinfo[0] = '\0';
+        wchar_t wbuf[512] = {0};
+        DWORD wlen = sizeof(wbuf);
+        if (WinHttpQueryHeaders(hR, WINHTTP_QUERY_CUSTOM, L"subscription-userinfo", wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
+            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out_userinfo, userinfo_cap, NULL, NULL);
+        }
+    }
+    if (out_interval && interval_cap > 0) {
+        out_interval[0] = '\0';
+        wchar_t wbuf[128] = {0};
+        DWORD wlen = sizeof(wbuf);
+        if (WinHttpQueryHeaders(hR, WINHTTP_QUERY_CUSTOM, L"profile-update-interval", wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
+            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out_interval, interval_cap, NULL, NULL);
+        }
+    }
+    if (out_disposition && disposition_cap > 0) {
+        out_disposition[0] = '\0';
+        wchar_t wbuf[512] = {0};
+        DWORD wlen = sizeof(wbuf);
+        if (WinHttpQueryHeaders(hR, WINHTTP_QUERY_CUSTOM, L"content-disposition", wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
+            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out_disposition, disposition_cap, NULL, NULL);
+        }
     }
 
     total = 0;
@@ -186,10 +214,29 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     std::vector<Proxy> all_proxies;
     int success_count = 0;
     
+    char userinfo[512] = {0};
+    char interval[128] = {0};
+    char disposition[512] = {0};
+    
     for (int i = 0; i < temp_rt.url_count; i++) {
-        int blen = fetch_url(&temp_rt, body, BODY_CAP, NULL, i);
+        char temp_userinfo[512] = {0};
+        char temp_interval[128] = {0};
+        char temp_disp[512] = {0};
+        int blen = fetch_url(&temp_rt, body, BODY_CAP, NULL, i,
+                             temp_userinfo, sizeof(temp_userinfo),
+                             temp_interval, sizeof(temp_interval),
+                             temp_disp, sizeof(temp_disp));
         if (blen >= 0) {
             success_count++;
+            if (userinfo[0] == '\0' && temp_userinfo[0] != '\0') {
+                strcpy(userinfo, temp_userinfo);
+            }
+            if (interval[0] == '\0' && temp_interval[0] != '\0') {
+                strcpy(interval, temp_interval);
+            }
+            if (disposition[0] == '\0' && temp_disp[0] != '\0') {
+                strcpy(disposition, temp_disp);
+            }
             std::string payload(body, blen);
             if (target == "clash" && payload.find("proxies:") != std::string::npos) {
                 // Extract Native Clash YAML proxies
@@ -303,9 +350,18 @@ void handle_subconverter(SOCKET c, const std::string& req) {
             out_payload = gen_v2ray(all_proxies);
         }
 
-        std::string hdr = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " + std::to_string(out_payload.length()) + "\r\nConnection: close\r\n\r\n";
-        send(c, hdr.c_str(), hdr.length(), 0);
-        send(c, out_payload.c_str(), out_payload.length(), 0);
+        std::string extra_hdrs;
+        if (userinfo[0]) extra_hdrs += "subscription-userinfo: " + std::string(userinfo) + "\r\n";
+        if (interval[0]) extra_hdrs += "profile-update-interval: " + std::string(interval) + "\r\n";
+        if (disposition[0]) extra_hdrs += "content-disposition: " + std::string(disposition) + "\r\n";
+
+        std::string hdr = "HTTP/1.1 200 OK\r\n"
+                          "Content-Type: text/plain; charset=utf-8\r\n"
+                          "Content-Length: " + std::to_string(out_payload.length()) + "\r\n"
+                          + extra_hdrs +
+                          "Connection: close\r\n\r\n";
+        send(c, hdr.c_str(), (int)hdr.length(), 0);
+        send(c, out_payload.c_str(), (int)out_payload.length(), 0);
         logm("  [SUBCONV] target=%s -> 200 OK (%zu bytes)\n", target.c_str(), out_payload.length());
     } else {
         std::string e = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n";
@@ -354,33 +410,57 @@ void handle_client(SOCKET c, const Route *rt) {
     std::string final_payload;
     int success_count = 0;
     
+    char userinfo[512] = {0};
+    char interval[128] = {0};
+    char disposition[512] = {0};
+
     for (int i = 0; i < rt->url_count; i++) {
-        int blen = fetch_url(rt, body, BODY_CAP, NULL, i);
+        char temp_userinfo[512] = {0};
+        char temp_interval[128] = {0};
+        char temp_disp[512] = {0};
+        int blen = fetch_url(rt, body, BODY_CAP, NULL, i,
+                             temp_userinfo, sizeof(temp_userinfo),
+                             temp_interval, sizeof(temp_interval),
+                             temp_disp, sizeof(temp_disp));
         if (blen > 0) {
             success_count++;
+            if (userinfo[0] == '\0' && temp_userinfo[0] != '\0') {
+                strcpy(userinfo, temp_userinfo);
+            }
+            if (interval[0] == '\0' && temp_interval[0] != '\0') {
+                strcpy(interval, temp_interval);
+            }
+            if (disposition[0] == '\0' && temp_disp[0] != '\0') {
+                strcpy(disposition, temp_disp);
+            }
             if (!final_payload.empty()) final_payload += "\n";
             final_payload.append(body, blen);
         }
     }
 
-    char hdr[256];
+    std::string extra_hdrs;
+    if (userinfo[0]) extra_hdrs += "subscription-userinfo: " + std::string(userinfo) + "\r\n";
+    if (interval[0]) extra_hdrs += "profile-update-interval: " + std::string(interval) + "\r\n";
+    if (disposition[0]) extra_hdrs += "content-disposition: " + std::string(disposition) + "\r\n";
+
     if (success_count > 0) {
-        int hl = snprintf(hdr, sizeof(hdr),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/plain; charset=utf-8\r\n"
-            "Content-Length: %zu\r\n"
-            "Connection: close\r\n\r\n", final_payload.length());
-        send(c, hdr, hl, 0);
-        send(c, final_payload.c_str(), final_payload.length(), 0);
+        std::string hdr = "HTTP/1.1 200 OK\r\n"
+                          "Content-Type: text/plain; charset=utf-8\r\n"
+                          "Content-Length: " + std::to_string(final_payload.length()) + "\r\n"
+                          + extra_hdrs +
+                          "Connection: close\r\n\r\n";
+        send(c, hdr.c_str(), (int)hdr.length(), 0);
+        send(c, final_payload.c_str(), (int)final_payload.length(), 0);
         logm("  [OK] 200  %zu bytes\n\n", final_payload.length());
     } else {
         int el = snprintf(body, BODY_CAP, "upstream error");
-        int hl = snprintf(hdr, sizeof(hdr),
+        char err_hdr[256];
+        int hl = snprintf(err_hdr, sizeof(err_hdr),
             "HTTP/1.1 502 Bad Gateway\r\n"
             "Content-Type: text/plain\r\n"
             "Content-Length: %d\r\n"
             "Connection: close\r\n\r\n", el);
-        send(c, hdr, hl, 0);
+        send(c, err_hdr, hl, 0);
         send(c, body, el, 0);
         logm("  [FAIL] 502  upstream failed\n\n");
     }

@@ -1,0 +1,48 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub Release'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Configure CMake
+      run: cmake -B build -S .
+
+    - name: Build
+      run: cmake --build build --config Release -j 4
+      
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C Release --output-on-failure
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sub_bridge-windows
+        path: build/Release/sub_bridge.exe
+
+    - name: Create Release
+      if: github.event.inputs.release == 'true' && github.event_name == 'workflow_dispatch'
+      uses: softprops/action-gh-release@v3
+      with:
+        files: build/Release/sub_bridge.exe
+        tag_name: "v${{ github.run_number }}"
+        name: "Release v${{ github.run_number }}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

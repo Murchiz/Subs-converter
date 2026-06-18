@@ -2,7 +2,10 @@
 #include "types.h"
 #include <string>
 
-int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua = NULL, int url_index = 0);
+int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua = NULL, int url_index = 0,
+              char *out_userinfo = NULL, int userinfo_cap = 0,
+              char *out_interval = NULL, int interval_cap = 0,
+              char *out_disposition = NULL, int disposition_cap = 0);
 void handle_subconverter(SOCKET c, const std::string& req);
 void handle_client(SOCKET c, const Route *rt);
 SOCKET make_listener(int port);
