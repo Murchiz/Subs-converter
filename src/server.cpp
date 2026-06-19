@@ -4,13 +4,195 @@
 #include "generator.h"
 #include <thread>
 #include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+static void copy_limited(char *dst, int cap, const char *src) {
+    if (!dst || cap <= 0) return;
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+    strncpy(dst, src, cap - 1);
+    dst[cap - 1] = '\0';
+}
+
+static bool query_header(HINTERNET req, const wchar_t *name, char *out, int cap) {
+    if (!out || cap <= 0) return false;
+    out[0] = '\0';
+
+    wchar_t wbuf[2048] = {0};
+    DWORD wlen = sizeof(wbuf);
+    if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, name, wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
+        return false;
+    }
+
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out, cap, NULL, NULL);
+    out[cap - 1] = '\0';
+    return out[0] != '\0';
+}
+
+static bool query_content_type(HINTERNET req, char *out, int cap) {
+    if (!out || cap <= 0) return false;
+    out[0] = '\0';
+
+    wchar_t wbuf[256] = {0};
+    DWORD wlen = sizeof(wbuf);
+    if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX, wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
+        return false;
+    }
+
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out, cap, NULL, NULL);
+    out[cap - 1] = '\0';
+    return out[0] != '\0';
+}
+
+static void merge_metadata(SubMetadata& dst, const SubMetadata& src) {
+    if (!dst.userinfo[0] && src.userinfo[0]) copy_limited(dst.userinfo, sizeof(dst.userinfo), src.userinfo);
+    if (!dst.interval[0] && src.interval[0]) copy_limited(dst.interval, sizeof(dst.interval), src.interval);
+    if (!dst.disposition[0] && src.disposition[0]) copy_limited(dst.disposition, sizeof(dst.disposition), src.disposition);
+    if (!dst.profile_title[0] && src.profile_title[0]) copy_limited(dst.profile_title, sizeof(dst.profile_title), src.profile_title);
+    if (!dst.announce[0] && src.announce[0]) copy_limited(dst.announce, sizeof(dst.announce), src.announce);
+    if (!dst.profile_web_page_url[0] && src.profile_web_page_url[0]) copy_limited(dst.profile_web_page_url, sizeof(dst.profile_web_page_url), src.profile_web_page_url);
+    if (!dst.support_url[0] && src.support_url[0]) copy_limited(dst.support_url, sizeof(dst.support_url), src.support_url);
+    if (!dst.refill_date[0] && src.refill_date[0]) copy_limited(dst.refill_date, sizeof(dst.refill_date), src.refill_date);
+    if (!dst.content_type[0] && src.content_type[0]) copy_limited(dst.content_type, sizeof(dst.content_type), src.content_type);
+}
+
+static std::string header_safe(const char *value) {
+    std::string out;
+    if (!value) return out;
+    for (const char *p = value; *p; p++) {
+        out += (*p == '\r' || *p == '\n') ? ' ' : *p;
+    }
+    return out;
+}
+
+static std::string lower_copy(const std::string& value) {
+    std::string out = value;
+    for (char& c : out) c = (char)tolower((unsigned char)c);
+    return out;
+}
+
+static bool contains_ci(const std::string& value, const char *needle) {
+    return lower_copy(value).find(lower_copy(needle)) != std::string::npos;
+}
+
+static std::string request_header(const std::string& req, const char *name) {
+    std::string wanted = lower_copy(name);
+    size_t start = 0;
+    while (start < req.length()) {
+        size_t end = req.find('\n', start);
+        if (end == std::string::npos) end = req.length();
+        std::string line = req.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        size_t colon = line.find(':');
+        if (colon != std::string::npos && lower_copy(line.substr(0, colon)) == wanted) {
+            size_t value_start = line.find_first_not_of(" \t", colon + 1);
+            return value_start == std::string::npos ? "" : line.substr(value_start);
+        }
+        start = end + 1;
+    }
+    return "";
+}
+
+static std::string target_from_user_agent(const std::string& ua) {
+    if (contains_ci(ua, "clash")) return "clash";
+    if (contains_ci(ua, "sing-box") || contains_ci(ua, "singbox")) return "singbox";
+    if (contains_ci(ua, "v2ray") || contains_ci(ua, "xray") ||
+        contains_ci(ua, "nekobox") || contains_ci(ua, "nekoray") ||
+        contains_ci(ua, "happ") || contains_ci(ua, "hiddify") ||
+        contains_ci(ua, "streisand") || contains_ci(ua, "shadowrocket")) {
+        return "v2ray";
+    }
+    return "";
+}
+
+static void append_header(std::string& headers, const char *name, const char *value) {
+    if (!value || !value[0]) return;
+    headers += name;
+    headers += ": ";
+    headers += header_safe(value);
+    headers += "\r\n";
+}
+
+static std::string quoted_filename(const char *name) {
+    std::string out;
+    for (const char *p = name; p && *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c < 0x20 || c >= 0x7f) continue;
+        if (*p == '"' || *p == '\\') out += '_';
+        else out += *p;
+    }
+    return out.empty() ? "subscription" : out;
+}
+
+static void apply_route_name(SubMetadata& meta, const char *name) {
+    if (!name || !name[0]) return;
+
+    std::string title = "base64:" + base64_encode(name);
+    copy_limited(meta.profile_title, sizeof(meta.profile_title), title.c_str());
+
+    std::string disp = "attachment; filename=\"" + quoted_filename(name) +
+                       "\"; filename*=UTF-8''" + url_encode(name);
+    copy_limited(meta.disposition, sizeof(meta.disposition), disp.c_str());
+}
+
+static std::string metadata_headers(const SubMetadata& meta) {
+    std::string headers;
+    append_header(headers, "Subscription-Userinfo", meta.userinfo);
+    append_header(headers, "Profile-Update-Interval", meta.interval);
+    append_header(headers, "Profile-Title", meta.profile_title);
+    append_header(headers, "Announce", meta.announce);
+    append_header(headers, "Profile-Web-Page-Url", meta.profile_web_page_url);
+    append_header(headers, "Support-Url", meta.support_url);
+    append_header(headers, "Subscription-Refill-Date", meta.refill_date);
+    append_header(headers, "Content-Disposition", meta.disposition);
+    return headers;
+}
+
+static const char *converted_content_type(const std::string& target) {
+    if (target == "clash") return "text/yaml; charset=utf-8";
+    if (target == "singbox" || target == "sing-box") return "application/json; charset=utf-8";
+    return "text/plain; charset=utf-8";
+}
+
+static bool preferred_metadata_source(const std::string& target, const Route& rt, int index, const SubMetadata& meta) {
+    std::string ua = (index >= 0 && index < 8) ? rt.user_agents[index] : "";
+    if (target == "clash") {
+        return contains_ci(ua, "clash") || contains_ci(meta.content_type, "yaml");
+    }
+    if (target == "v2ray") {
+        return contains_ci(meta.content_type, "text/plain");
+    }
+    if (target == "singbox" || target == "sing-box") {
+        return contains_ci(ua, "sing") || contains_ci(meta.content_type, "json");
+    }
+    return false;
+}
+
+static void merge_metadata_for_target(SubMetadata& dst, const SubMetadata& src, bool preferred, bool& have_preferred) {
+    if (preferred && !have_preferred) {
+        SubMetadata old = dst;
+        dst = src;
+        merge_metadata(dst, old);
+        have_preferred = true;
+        return;
+    }
+    if (!have_preferred || preferred) {
+        merge_metadata(dst, src);
+    }
+}
+
 int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int url_index,
-              char *out_userinfo, int userinfo_cap,
-              char *out_interval, int interval_cap,
-              char *out_disposition, int disposition_cap) {
+              SubMetadata *out_meta) {
     HINTERNET hS = NULL, hC = NULL, hR = NULL;
     int total = -1;
     char full_url[4096];
+    std::wstring object_name;
+
+    if (out_meta) memset(out_meta, 0, sizeof(*out_meta));
 
     if (rt->is_convert) {
         snprintf(full_url, sizeof(full_url),
@@ -28,6 +210,7 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
     uc.dwStructSize = sizeof(uc);
     uc.dwHostNameLength = -1;
     uc.dwUrlPathLength = -1;
+    uc.dwExtraInfoLength = -1;
 
     if (!WinHttpCrackUrl(wurl, 0, 0, &uc)) {
         return -1;
@@ -52,7 +235,16 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
     hC = WinHttpConnect(hS, host, uc.nPort, 0);
     if (!hC) goto out;
 
-    hR = WinHttpOpenRequest(hC, L"GET", uc.lpszUrlPath, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+    if (uc.lpszUrlPath && uc.dwUrlPathLength) {
+        object_name.assign(uc.lpszUrlPath, uc.dwUrlPathLength);
+    } else {
+        object_name = L"/";
+    }
+    if (uc.lpszExtraInfo && uc.dwExtraInfoLength) {
+        object_name.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
+    }
+
+    hR = WinHttpOpenRequest(hC, L"GET", object_name.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                             (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0);
     if (!hR) goto out;
 
@@ -81,29 +273,16 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
         if (code != 200) { total = -(int)code; goto out; }
     }
 
-    if (out_userinfo && userinfo_cap > 0) {
-        out_userinfo[0] = '\0';
-        wchar_t wbuf[512] = {0};
-        DWORD wlen = sizeof(wbuf);
-        if (WinHttpQueryHeaders(hR, WINHTTP_QUERY_CUSTOM, L"subscription-userinfo", wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
-            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out_userinfo, userinfo_cap, NULL, NULL);
-        }
-    }
-    if (out_interval && interval_cap > 0) {
-        out_interval[0] = '\0';
-        wchar_t wbuf[128] = {0};
-        DWORD wlen = sizeof(wbuf);
-        if (WinHttpQueryHeaders(hR, WINHTTP_QUERY_CUSTOM, L"profile-update-interval", wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
-            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out_interval, interval_cap, NULL, NULL);
-        }
-    }
-    if (out_disposition && disposition_cap > 0) {
-        out_disposition[0] = '\0';
-        wchar_t wbuf[512] = {0};
-        DWORD wlen = sizeof(wbuf);
-        if (WinHttpQueryHeaders(hR, WINHTTP_QUERY_CUSTOM, L"content-disposition", wbuf, &wlen, WINHTTP_NO_HEADER_INDEX)) {
-            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out_disposition, disposition_cap, NULL, NULL);
-        }
+    if (out_meta) {
+        query_header(hR, L"Subscription-Userinfo", out_meta->userinfo, sizeof(out_meta->userinfo));
+        query_header(hR, L"Profile-Update-Interval", out_meta->interval, sizeof(out_meta->interval));
+        query_header(hR, L"Content-Disposition", out_meta->disposition, sizeof(out_meta->disposition));
+        query_header(hR, L"Profile-Title", out_meta->profile_title, sizeof(out_meta->profile_title));
+        query_header(hR, L"Announce", out_meta->announce, sizeof(out_meta->announce));
+        query_header(hR, L"Profile-Web-Page-Url", out_meta->profile_web_page_url, sizeof(out_meta->profile_web_page_url));
+        query_header(hR, L"Support-Url", out_meta->support_url, sizeof(out_meta->support_url));
+        query_header(hR, L"Subscription-Refill-Date", out_meta->refill_date, sizeof(out_meta->refill_date));
+        query_content_type(hR, out_meta->content_type, sizeof(out_meta->content_type));
     }
 
     total = 0;
@@ -166,6 +345,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
         for (int i = 0; i < g_RouteCount; i++) {
             if (g_Routes[i].local_port == internal_port) {
                 temp_rt.url_count = g_Routes[i].url_count;
+                copy_limited(temp_rt.name, sizeof(temp_rt.name), g_Routes[i].name);
                 for (int j = 0; j < temp_rt.url_count; j++) {
                     strcpy(temp_rt.urls[j], g_Routes[i].urls[j]);
                     if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
@@ -185,6 +365,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
             for (int j = 0; j < g_Routes[i].url_count; j++) {
                 if (url == g_Routes[i].urls[j]) {
                     temp_rt.url_count = 1;
+                    copy_limited(temp_rt.name, sizeof(temp_rt.name), g_Routes[i].name);
                     strcpy(temp_rt.urls[0], g_Routes[i].urls[j]);
                     if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
                         strcpy(temp_rt.user_agents[0], "Happ/3.23.0");
@@ -214,29 +395,16 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     std::vector<Proxy> all_proxies;
     int success_count = 0;
     
-    char userinfo[512] = {0};
-    char interval[128] = {0};
-    char disposition[512] = {0};
+    SubMetadata meta = {0};
+    bool have_preferred_meta = false;
     
     for (int i = 0; i < temp_rt.url_count; i++) {
-        char temp_userinfo[512] = {0};
-        char temp_interval[128] = {0};
-        char temp_disp[512] = {0};
+        SubMetadata temp_meta = {0};
         int blen = fetch_url(&temp_rt, body, BODY_CAP, NULL, i,
-                             temp_userinfo, sizeof(temp_userinfo),
-                             temp_interval, sizeof(temp_interval),
-                             temp_disp, sizeof(temp_disp));
+                             &temp_meta);
         if (blen >= 0) {
             success_count++;
-            if (userinfo[0] == '\0' && temp_userinfo[0] != '\0') {
-                strcpy(userinfo, temp_userinfo);
-            }
-            if (interval[0] == '\0' && temp_interval[0] != '\0') {
-                strcpy(interval, temp_interval);
-            }
-            if (disposition[0] == '\0' && temp_disp[0] != '\0') {
-                strcpy(disposition, temp_disp);
-            }
+            merge_metadata_for_target(meta, temp_meta, preferred_metadata_source(target, temp_rt, i, temp_meta), have_preferred_meta);
             std::string payload(body, blen);
             if (target == "clash" && payload.find("proxies:") != std::string::npos) {
                 // Extract Native Clash YAML proxies
@@ -350,13 +518,11 @@ void handle_subconverter(SOCKET c, const std::string& req) {
             out_payload = gen_v2ray(all_proxies);
         }
 
-        std::string extra_hdrs;
-        if (userinfo[0]) extra_hdrs += "subscription-userinfo: " + std::string(userinfo) + "\r\n";
-        if (interval[0]) extra_hdrs += "profile-update-interval: " + std::string(interval) + "\r\n";
-        if (disposition[0]) extra_hdrs += "content-disposition: " + std::string(disposition) + "\r\n";
+        apply_route_name(meta, temp_rt.name);
+        std::string extra_hdrs = metadata_headers(meta);
 
         std::string hdr = "HTTP/1.1 200 OK\r\n"
-                          "Content-Type: text/plain; charset=utf-8\r\n"
+                          "Content-Type: " + std::string(converted_content_type(target)) + "\r\n"
                           "Content-Length: " + std::to_string(out_payload.length()) + "\r\n"
                           + extra_hdrs +
                           "Connection: close\r\n\r\n";
@@ -397,6 +563,21 @@ void handle_client(SOCKET c, const Route *rt) {
         return;
     }
 
+    if (!rt->is_convert) {
+        std::string auto_target = target_from_user_agent(request_header(req, "User-Agent"));
+        if (!auto_target.empty()) {
+            std::string sub_req = "GET /sub?target=" + auto_target +
+                                  "&url=http%3A%2F%2F127.0.0.1%3A" +
+                                  std::to_string(rt->local_port) +
+                                  " HTTP/1.1\r\n\r\n";
+            logm("  [AUTO] Port %d UA target=%s\n", rt->local_port, auto_target.c_str());
+            handle_subconverter(c, sub_req);
+            shutdown(c, SD_SEND);
+            closesocket(c);
+            return;
+        }
+    }
+
     logm("  [REQ] Port %d\n", rt->local_port);
 
     char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
@@ -410,42 +591,27 @@ void handle_client(SOCKET c, const Route *rt) {
     std::string final_payload;
     int success_count = 0;
     
-    char userinfo[512] = {0};
-    char interval[128] = {0};
-    char disposition[512] = {0};
+    SubMetadata meta = {0};
 
     for (int i = 0; i < rt->url_count; i++) {
-        char temp_userinfo[512] = {0};
-        char temp_interval[128] = {0};
-        char temp_disp[512] = {0};
+        SubMetadata temp_meta = {0};
         int blen = fetch_url(rt, body, BODY_CAP, NULL, i,
-                             temp_userinfo, sizeof(temp_userinfo),
-                             temp_interval, sizeof(temp_interval),
-                             temp_disp, sizeof(temp_disp));
+                             &temp_meta);
         if (blen > 0) {
             success_count++;
-            if (userinfo[0] == '\0' && temp_userinfo[0] != '\0') {
-                strcpy(userinfo, temp_userinfo);
-            }
-            if (interval[0] == '\0' && temp_interval[0] != '\0') {
-                strcpy(interval, temp_interval);
-            }
-            if (disposition[0] == '\0' && temp_disp[0] != '\0') {
-                strcpy(disposition, temp_disp);
-            }
+            merge_metadata(meta, temp_meta);
             if (!final_payload.empty()) final_payload += "\n";
             final_payload.append(body, blen);
         }
     }
 
-    std::string extra_hdrs;
-    if (userinfo[0]) extra_hdrs += "subscription-userinfo: " + std::string(userinfo) + "\r\n";
-    if (interval[0]) extra_hdrs += "profile-update-interval: " + std::string(interval) + "\r\n";
-    if (disposition[0]) extra_hdrs += "content-disposition: " + std::string(disposition) + "\r\n";
+    apply_route_name(meta, rt->name);
+    std::string extra_hdrs = metadata_headers(meta);
 
     if (success_count > 0) {
+        std::string content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
         std::string hdr = "HTTP/1.1 200 OK\r\n"
-                          "Content-Type: text/plain; charset=utf-8\r\n"
+                          "Content-Type: " + content_type + "\r\n"
                           "Content-Length: " + std::to_string(final_payload.length()) + "\r\n"
                           + extra_hdrs +
                           "Connection: close\r\n\r\n";

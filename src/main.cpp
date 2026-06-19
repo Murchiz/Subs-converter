@@ -56,6 +56,7 @@ void load_config() {
     int in_sub = 0, in_dev = 0;
     char links[8][2048] = { 0 };
     char uas[8][128] = { 0 };
+    char sub_name[128] = { 0 };
     int link_count = 0;
     int port = 0, hwid = 0;
     char converts[1024] = { 0 };
@@ -68,6 +69,7 @@ void load_config() {
             r->is_convert = 0;
             r->is_subconverter = 0;
             r->url_count = link_count;
+            strcpy(r->name, sub_name);
             for (int i = 0; i < link_count; i++) {
                 strcpy(r->urls[i], links[i]);
                 strcpy(r->user_agents[i], uas[i]);
@@ -86,6 +88,7 @@ void load_config() {
                     rc->base_port = port;
                     rc->url_count = 1;
                     strcpy(rc->target, tok);
+                    strcpy(rc->name, r->name);
                     // Conversion routes do not need user agents, they fetch from local 25500
                     rc->use_hwid = 0;
                     c_idx++;
@@ -94,6 +97,7 @@ void load_config() {
             }
         }
         for(int i=0; i<8; i++) { links[i][0] = 0; uas[i][0] = 0; }
+        sub_name[0] = 0;
         link_count = 0; port = 0; hwid = 0; converts[0] = 0;
     };
 
@@ -129,6 +133,7 @@ void load_config() {
                 int idx = (strlen(k) > 10) ? atoi(k + 10) - 1 : 0;
                 if (idx >= 0 && idx < 8) strcpy(uas[idx], v);
             }
+            else if (_stricmp(k, "name") == 0) strcpy(sub_name, v);
             else if (_stricmp(k, "port") == 0) port = atoi(v);
             else if (_stricmp(k, "hwid") == 0) hwid = (_stricmp(v, "true") == 0 || _stricmp(v, "1") == 0);
             else if (_stricmp(k, "converts") == 0) strcpy(converts, v);
