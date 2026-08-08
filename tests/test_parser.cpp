@@ -87,11 +87,47 @@ void test_parse_json() {
     std::cout << "test_parse_json passed.\n";
 }
 
+void test_rules() {
+    std::ifstream file("references/original.json");
+    if (!file.is_open()) return;
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = buffer.str();
+    
+    std::vector<Proxy> proxies = parse_proxies(content);
+    std::vector<Rule> rules = parse_xray_rules(content);
+    
+    std::cout << "Parsed " << rules.size() << " rules from original.json:\n";
+    for (size_t i = 0; i < rules.size(); i++) {
+        std::cout << " Rule #" << i << ": outbound=" << rules[i].outbound
+                  << ", domains=" << rules[i].domains.size()
+                  << ", ips=" << rules[i].ips.size()
+                  << ", protocols=" << rules[i].protocols.size()
+                  << ", port=" << rules[i].port << "\n";
+    }
+    
+    std::string clash = gen_clash(proxies, rules);
+    std::string singbox = gen_singbox(proxies, "android", rules);
+    
+    std::cout << "Clash rule generation contains DOMAIN-SUFFIX: " 
+              << (clash.find("DOMAIN-SUFFIX,img.avito.st,DIRECT") != std::string::npos ? "YES" : "NO") << "\n";
+    std::cout << "Clash rule generation contains 255.255.255.255/32: " 
+              << (clash.find("IP-CIDR,255.255.255.255/32,DIRECT,no-resolve") != std::string::npos ? "YES" : "NO") << "\n";
+    std::cout << "Singbox rule generation contains domain_suffix: "
+              << (singbox.find("img.avito.st") != std::string::npos ? "YES" : "NO") << "\n";
+    std::cout << "Singbox rule has no 'type: field': "
+              << (singbox.find("\"type\":\"field\"") == std::string::npos ? "YES" : "NO") << "\n";
+    
+    assert(clash.find("IP-CIDR,255.255.255.255/32,DIRECT,no-resolve") != std::string::npos);
+    assert(singbox.find("\"type\":\"field\"") == std::string::npos);
+    std::cout << "test_rules passed.\n";
+}
+
 int main() {
     std::cout << "Running tests...\n";
     test_base64();
     test_parse_uri();
-    test_parse_json();
+    test_rules();
     std::cout << "All tests passed successfully.\n";
     return 0;
 }

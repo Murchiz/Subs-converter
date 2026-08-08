@@ -27,7 +27,16 @@ struct SubMetadata {
     char content_type[128];
 };
 struct Route { int local_port; int is_convert; int base_port; char target[64]; char name[128]; char urls[8][2048]; int url_count; int use_hwid; int is_subconverter; char user_agents[8][128]; SOCKET listen_sock; };
-struct Proxy { char protocol[16]; char name[128]; char server[128]; int port; char uuid[64]; char type[32]; char security[32]; char sni[128]; char fp[64]; char pbk[128]; char sid[64]; char flow[64]; char path[128]; char host[128]; char alterId[16]; char cipher[32]; char alpn[64]; char mode[32]; char extra[1024]; char obfs[32]; char obfs_pass[128]; char up[32]; char down[32]; };
+struct Rule {
+    char outbound[64];
+    std::vector<std::string> domains;
+    std::vector<std::string> ips;
+    std::vector<std::string> protocols;
+    std::string port;
+    std::string network;
+};
+
+struct Proxy { char protocol[16]; char name[128]; char server[128]; int port; char uuid[64]; char type[32]; char security[32]; char sni[128]; char fp[64]; char pbk[128]; char sid[64]; char flow[64]; char path[128]; char host[128]; char alterId[16]; char cipher[32]; char alpn[64]; char mode[32]; char extra[4096]; char obfs[32]; char obfs_pass[128]; char up[32]; char down[32]; };
 
 extern Route g_Routes[64];
 extern int g_RouteCount;

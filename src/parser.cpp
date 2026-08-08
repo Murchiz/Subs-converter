@@ -104,7 +104,7 @@ Proxy parse_uri(const std::string& uri) {
             if (q1 == std::string::npos) return std::string("");
             size_t q2 = jstr.find("\"", q1 + 1);
             if (q2 == std::string::npos) return std::string("");
-            return jstr.substr(q1 + 1, q2 - q1 - 1);
+            return decode_json_string(jstr.substr(q1 + 1, q2 - q1 - 1));
         };
         auto get_json_int = [&](const std::string& key) {
             size_t kp = jstr.find("\"" + key + "\":");
@@ -171,18 +171,48 @@ Proxy parse_xray_json(const std::string& obj) {
     std::string id = json_extract_string(outbound, "id");
     if (id.empty()) id = json_extract_string(outbound, "auth");
     if (id.empty()) id = json_extract_string(outbound, "password");
+    if (id.empty()) id = json_extract_string(outbound, "uuid");
     strcpy(p.uuid, id.c_str());
     
     strcpy(p.flow, json_extract_string(outbound, "flow").c_str());
-    strcpy(p.type, json_extract_string(outbound, "network").c_str());
-    strcpy(p.security, json_extract_string(outbound, "security").c_str());
-    strcpy(p.sni, json_extract_string(outbound, "serverName").c_str());
-    strcpy(p.fp, json_extract_string(outbound, "fingerprint").c_str());
-    strcpy(p.pbk, json_extract_string(outbound, "publicKey").c_str());
-    strcpy(p.sid, json_extract_string(outbound, "shortId").c_str());
-    strcpy(p.path, json_extract_string(outbound, "path").c_str());
-    if (p.path[0] == '\0') strcpy(p.path, json_extract_string(outbound, "serviceName").c_str());
-    strcpy(p.host, json_extract_string(outbound, "host").c_str());
+
+    std::string net = json_extract_string(outbound, "network");
+    if (net.empty()) net = json_extract_string(outbound, "type");
+    if (net.empty()) net = json_extract_string(outbound, "net");
+    strcpy(p.type, net.c_str());
+
+    std::string sec = json_extract_string(outbound, "security");
+    if (sec.empty()) sec = json_extract_string(outbound, "tls");
+    strcpy(p.security, sec.c_str());
+
+    std::string sni = json_extract_string(outbound, "serverName");
+    if (sni.empty()) sni = json_extract_string(outbound, "servername");
+    if (sni.empty()) sni = json_extract_string(outbound, "sni");
+    if (sni.empty()) sni = json_extract_string(outbound, "peer");
+    strcpy(p.sni, sni.c_str());
+
+    std::string fp = json_extract_string(outbound, "fingerprint");
+    if (fp.empty()) fp = json_extract_string(outbound, "fp");
+    strcpy(p.fp, fp.c_str());
+
+    std::string pbk = json_extract_string(outbound, "publicKey");
+    if (pbk.empty()) pbk = json_extract_string(outbound, "public_key");
+    if (pbk.empty()) pbk = json_extract_string(outbound, "pbk");
+    strcpy(p.pbk, pbk.c_str());
+
+    std::string sid = json_extract_string(outbound, "shortId");
+    if (sid.empty()) sid = json_extract_string(outbound, "short_id");
+    if (sid.empty()) sid = json_extract_string(outbound, "sid");
+    strcpy(p.sid, sid.c_str());
+
+    std::string path = json_extract_string(outbound, "path");
+    if (path.empty()) path = json_extract_string(outbound, "serviceName");
+    if (path.empty()) path = json_extract_string(outbound, "service_name");
+    strcpy(p.path, path.c_str());
+
+    std::string host = json_extract_string(outbound, "host");
+    if (host.empty()) host = json_extract_string(outbound, "Host");
+    strcpy(p.host, host.c_str());
     
     size_t alpn_pos = outbound.find("\"alpn\"");
     if (alpn_pos != std::string::npos) {
@@ -268,3 +298,64 @@ std::vector<Proxy> parse_proxies(const std::string& decoded) {
     }
     return proxies;
 }
+
+std::vector<Rule> parse_xray_rules(const std::string& json) {
+    std::vector<Rule> rules;
+    size_t r_pos = json.find("\"routing\"");
+    if (r_pos == std::string::npos) r_pos = json.find("\"rules\"");
+    if (r_pos == std::string::npos) return rules;
+
+    size_t array_start = json.find("[", r_pos);
+    if (array_start == std::string::npos) return rules;
+
+    int depth = 0;
+    size_t array_end = array_start;
+    for (size_t i = array_start; i < json.length(); i++) {
+        if (json[i] == '[') depth++;
+        else if (json[i] == ']') {
+            depth--;
+            if (depth == 0) { array_end = i; break; }
+        }
+    }
+
+    std::string rules_block = json.substr(array_start + 1, array_end - array_start - 1);
+    
+    size_t start = 0;
+    while ((start = rules_block.find("{", start)) != std::string::npos) {
+        int obj_depth = 0;
+        size_t end = start;
+        for (size_t i = start; i < rules_block.length(); i++) {
+            if (rules_block[i] == '{') obj_depth++;
+            else if (rules_block[i] == '}') {
+                obj_depth--;
+                if (obj_depth == 0) { end = i; break; }
+            }
+        }
+        if (obj_depth == 0 && end > start) {
+            std::string rule_obj = rules_block.substr(start, end - start + 1);
+            Rule r = {0};
+            std::string tag = json_extract_string(rule_obj, "outboundTag");
+            if (tag.empty()) tag = json_extract_string(rule_obj, "outbound");
+            strncpy(r.outbound, tag.c_str(), sizeof(r.outbound) - 1);
+
+            r.domains = json_extract_string_array(rule_obj, "domain");
+            r.ips = json_extract_string_array(rule_obj, "ip");
+            r.protocols = json_extract_string_array(rule_obj, "protocol");
+            r.port = json_extract_string(rule_obj, "port");
+            if (r.port.empty()) {
+                int p = json_extract_int(rule_obj, "port");
+                if (p > 0) r.port = std::to_string(p);
+            }
+            r.network = json_extract_string(rule_obj, "network");
+
+            if (r.outbound[0] || !r.domains.empty() || !r.ips.empty() || !r.protocols.empty() || !r.port.empty()) {
+                rules.push_back(r);
+            }
+            start = end + 1;
+        } else {
+            break;
+        }
+    }
+    return rules;
+}
+

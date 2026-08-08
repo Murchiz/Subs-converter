@@ -245,7 +245,7 @@ void run_console(void) {
 void run_convert(int argc, char **argv) {
     if (argc < 4) {
         printf("Usage: sub_bridge -convert <target> <url> [output_file]\n");
-        printf("Targets: clash, singbox\n");
+        printf("Targets: clash, singbox, singbox-pc\n");
         return;
     }
     std::string target = argv[2];
@@ -262,6 +262,7 @@ void run_convert(int argc, char **argv) {
     std::string raw_clash_proxies;
     std::string raw_clash_names;
     std::vector<Proxy> all_proxies;
+    std::vector<Rule> all_rules;
     int success_count = 0;
 
     for (int i = 0; i < temp_rt.url_count; i++) {
@@ -347,13 +348,15 @@ void run_convert(int argc, char **argv) {
                 }
                 auto p = parse_proxies(decoded);
                 all_proxies.insert(all_proxies.end(), p.begin(), p.end());
+                auto r = parse_xray_rules(decoded);
+                all_rules.insert(all_rules.end(), r.begin(), r.end());
             }
         }
     }
 
     if (success_count > 0) {
         if (target == "clash") {
-            out_payload = gen_clash(all_proxies);
+            out_payload = gen_clash(all_proxies, all_rules);
             if (!raw_clash_proxies.empty()) {
                 while (!raw_clash_proxies.empty() && isspace((unsigned char)raw_clash_proxies.back())) {
                     raw_clash_proxies.pop_back();
@@ -376,7 +379,9 @@ void run_convert(int argc, char **argv) {
                 }
             }
         } else if (target == "singbox" || target == "sing-box") {
-            out_payload = gen_singbox(all_proxies);
+            out_payload = gen_singbox(all_proxies, "android", all_rules);
+        } else if (target == "singbox-pc" || target == "sing-box-pc") {
+            out_payload = gen_singbox(all_proxies, "pc", all_rules);
         } else {
             out_payload = gen_v2ray(all_proxies);
         }

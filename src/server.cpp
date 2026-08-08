@@ -154,7 +154,7 @@ static std::string metadata_headers(const SubMetadata& meta) {
 
 static const char *converted_content_type(const std::string& target) {
     if (target == "clash") return "text/yaml; charset=utf-8";
-    if (target == "singbox" || target == "sing-box") return "application/json; charset=utf-8";
+    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc") return "application/json; charset=utf-8";
     return "text/plain; charset=utf-8";
 }
 
@@ -166,7 +166,7 @@ static bool preferred_metadata_source(const std::string& target, const Route& rt
     if (target == "v2ray") {
         return contains_ci(meta.content_type, "text/plain");
     }
-    if (target == "singbox" || target == "sing-box") {
+    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc") {
         return contains_ci(ua, "sing") || contains_ci(meta.content_type, "json");
     }
     return false;
@@ -393,6 +393,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     std::string raw_clash_proxies;
     std::string raw_clash_names;
     std::vector<Proxy> all_proxies;
+    std::vector<Rule> all_rules;
     int success_count = 0;
     
     SubMetadata meta = {0};
@@ -484,13 +485,15 @@ void handle_subconverter(SOCKET c, const std::string& req) {
                 }
                 auto p = parse_proxies(decoded);
                 all_proxies.insert(all_proxies.end(), p.begin(), p.end());
+                auto r = parse_xray_rules(decoded);
+                all_rules.insert(all_rules.end(), r.begin(), r.end());
             }
         }
     }
 
     if (success_count > 0) {
         if (target == "clash") {
-            out_payload = gen_clash(all_proxies);
+            out_payload = gen_clash(all_proxies, all_rules);
             if (!raw_clash_proxies.empty()) {
                 while (!raw_clash_proxies.empty() && isspace((unsigned char)raw_clash_proxies.back())) {
                     raw_clash_proxies.pop_back();
@@ -513,7 +516,9 @@ void handle_subconverter(SOCKET c, const std::string& req) {
                 }
             }
         } else if (target == "singbox" || target == "sing-box") {
-            out_payload = gen_singbox(all_proxies);
+            out_payload = gen_singbox(all_proxies, "android", all_rules);
+        } else if (target == "singbox-pc" || target == "sing-box-pc") {
+            out_payload = gen_singbox(all_proxies, "pc", all_rules);
         } else {
             out_payload = gen_v2ray(all_proxies);
         }

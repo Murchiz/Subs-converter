@@ -2,7 +2,7 @@
 #include "utils.h"
 #include <string.h>
 
-std::string gen_clash(const std::vector<Proxy>& proxies) {
+std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>& rules) {
     std::string out = "mixed-port: 7890\n"
                       "socks-port: 7891\n"
                       "allow-lan: true\n"
@@ -118,16 +118,121 @@ std::string gen_clash(const std::vector<Proxy>& proxies) {
            "    interval: 300\n"
            "    proxies:\n"
            + proxy_names +
-           "rules:\n"
-           "  - MATCH,Proxy\n";
+           "rules:\n";
+
+    std::string clash_rules;
+    for (const auto& r : rules) {
+        std::string target = "Proxy";
+        if (strcmp(r.outbound, "direct") == 0) target = "DIRECT";
+        else if (strcmp(r.outbound, "block") == 0 || strcmp(r.outbound, "reject") == 0) target = "REJECT";
+        else if (strcmp(r.outbound, "proxy") == 0 || strcmp(r.outbound, "Proxy") == 0) target = "Proxy";
+        else if (r.outbound[0] != '\0') target = r.outbound;
+
+        for (const auto& dom : r.domains) {
+            std::string d = dom;
+            if (d.rfind("domain:", 0) == 0) d = d.substr(7);
+            if (d.rfind("full:", 0) == 0) {
+                clash_rules += "  - DOMAIN," + d.substr(5) + "," + target + "\n";
+            } else if (d.rfind("geosite:", 0) == 0) {
+                clash_rules += "  - GEOSITE," + d.substr(8) + "," + target + "\n";
+            } else if (d.rfind("regexp:", 0) != 0) {
+                clash_rules += "  - DOMAIN-SUFFIX," + d + "," + target + "\n";
+            }
+        }
+        for (const auto& ip : r.ips) {
+            std::string i = ip;
+            if (i == "geoip:private") {
+                clash_rules += "  - GEOIP,private," + target + ",no-resolve\n";
+            } else if (i.rfind("geoip:", 0) == 0) {
+                clash_rules += "  - GEOIP," + i.substr(6) + "," + target + ",no-resolve\n";
+            } else {
+                bool is_v6 = (i.find(':') != std::string::npos);
+                if (i.find('/') == std::string::npos) {
+                    if (is_v6) clash_rules += "  - IP-CIDR6," + i + "/128," + target + ",no-resolve\n";
+                    else clash_rules += "  - IP-CIDR," + i + "/32," + target + ",no-resolve\n";
+                } else {
+                    if (is_v6) clash_rules += "  - IP-CIDR6," + i + "," + target + ",no-resolve\n";
+                    else clash_rules += "  - IP-CIDR," + i + "," + target + ",no-resolve\n";
+                }
+            }
+        }
+        if (!r.port.empty()) {
+            clash_rules += "  - DST-PORT," + r.port + "," + target + "\n";
+        }
+    }
+    clash_rules += "  - MATCH,Proxy\n";
+    out += clash_rules;
     return out;
 }
 
-std::string gen_singbox(const std::vector<Proxy>& proxies) {
+std::string gen_singbox(const std::vector<Proxy>& proxies, const std::string& platform, const std::vector<Rule>& rules) {
+    std::string route_extra = (platform == "pc") ? "" : ",\"override_android_vpn\":true,\"auto_detect_interface\":true";
+    std::string sing_rules = "[{\"action\":\"sniff\"},{\"mode\":\"or\",\"type\":\"logical\",\"rules\":[{\"protocol\":\"dns\"},{\"port\":53}],\"action\":\"hijack-dns\"},{\"outbound\":\"direct\",\"ip_is_private\":true}";
+
+    for (const auto& r : rules) {
+        std::string target_out = "Proxy";
+        bool is_reject = (strcmp(r.outbound, "block") == 0 || strcmp(r.outbound, "reject") == 0);
+        if (strcmp(r.outbound, "direct") == 0) target_out = "direct";
+        else if (strcmp(r.outbound, "proxy") == 0 || strcmp(r.outbound, "Proxy") == 0) target_out = "Proxy";
+        else if (r.outbound[0] != '\0') target_out = r.outbound;
+
+        if (!r.protocols.empty()) {
+            sing_rules += ",{";
+            if (is_reject) sing_rules += "\"action\":\"reject\",";
+            else sing_rules += "\"outbound\":\"" + target_out + "\",";
+            sing_rules += "\"protocol\":[";
+            for (size_t k = 0; k < r.protocols.size(); k++) {
+                if (k > 0) sing_rules += ",";
+                sing_rules += "\"" + sanitize_json(r.protocols[k]) + "\"";
+            }
+            sing_rules += "]}";
+        }
+
+        if (!r.domains.empty()) {
+            sing_rules += ",{";
+            if (is_reject) sing_rules += "\"action\":\"reject\",";
+            else sing_rules += "\"outbound\":\"" + target_out + "\",";
+            sing_rules += "\"domain_suffix\":[";
+            for (size_t k = 0; k < r.domains.size(); k++) {
+                if (k > 0) sing_rules += ",";
+                std::string d = r.domains[k];
+                if (d.rfind("domain:", 0) == 0) d = d.substr(7);
+                if (d.rfind("full:", 0) == 0) d = d.substr(5);
+                sing_rules += "\"" + sanitize_json(d) + "\"";
+            }
+            sing_rules += "]}";
+        }
+
+        if (!r.ips.empty()) {
+            sing_rules += ",{";
+            if (is_reject) sing_rules += "\"action\":\"reject\",";
+            else sing_rules += "\"outbound\":\"" + target_out + "\",";
+            sing_rules += "\"ip_cidr\":[";
+            for (size_t k = 0; k < r.ips.size(); k++) {
+                if (k > 0) sing_rules += ",";
+                std::string i = r.ips[k];
+                if (i.find('/') == std::string::npos) {
+                    if (i.find(':') != std::string::npos) i += "/128";
+                    else i += "/32";
+                }
+                sing_rules += "\"" + sanitize_json(i) + "\"";
+            }
+            sing_rules += "]}";
+        }
+
+        if (!r.port.empty()) {
+            sing_rules += ",{";
+            if (is_reject) sing_rules += "\"action\":\"reject\",";
+            else sing_rules += "\"outbound\":\"" + target_out + "\",";
+            sing_rules += "\"port\":[" + r.port + "]}";
+        }
+    }
+    sing_rules += "]";
+
     std::string out = "{\n"
                       "  \"dns\": {\"strategy\":\"ipv4_only\",\"rules\":[{\"server\":\"remote\",\"query_type\":[\"A\",\"AAAA\"]}],\"servers\":[{\"tag\":\"cf-dns\",\"type\":\"tls\",\"server\":\"1.1.1.1\"},{\"tag\":\"local\",\"type\":\"tcp\",\"server\":\"1.1.1.1\"},{\"tag\":\"remote\",\"type\":\"fakeip\",\"inet4_range\":\"198.18.0.0/15\",\"inet6_range\":\"fc00::/18\"}]},\n"
                       "  \"log\": {\"level\":\"info\",\"disabled\":false,\"timestamp\":true},\n"
-                      "  \"route\": {\"default_domain_resolver\":\"local\",\"rules\":[{\"action\":\"sniff\"},{\"mode\":\"or\",\"type\":\"logical\",\"rules\":[{\"protocol\":\"dns\"},{\"port\":53}],\"action\":\"hijack-dns\"},{\"outbound\":\"direct\",\"ip_is_private\":true}],\"override_android_vpn\":true,\"auto_detect_interface\":true},\n"
+                      "  \"route\": {\"default_domain_resolver\":\"local\",\"rules\":" + sing_rules + route_extra + "},\n"
                       "  \"inbounds\": [{\"mtu\":9000,\"tag\":\"tun-in\",\"type\":\"tun\",\"stack\":\"mixed\",\"auto_route\":true,\"strict_route\":true,\"address\":[\"172.19.0.1/30\",\"fdfe:dcba:9876::1/126\"],\"endpoint_independent_nat\":true},{\"tag\":\"mixed-in\",\"type\":\"mixed\",\"users\":[],\"listen\":\"127.0.0.1\",\"listen_port\":2412,\"set_system_proxy\":false}],\n"
                       "  \"outbounds\": [\n";
     std::string proxy_tags = "";
