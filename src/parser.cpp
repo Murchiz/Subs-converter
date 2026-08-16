@@ -1,20 +1,22 @@
 #include "parser.h"
 #include "utils.h"
-#include <string.h>
+#include <cstring>
 
 Proxy parse_uri(const std::string& uri) {
     Proxy p = {0};
     size_t scheme_pos = uri.find("://");
     if (scheme_pos == std::string::npos) return p;
     std::string scheme = uri.substr(0, scheme_pos);
-    strcpy(p.protocol, scheme.c_str());
+    strncpy_s(p.protocol, sizeof(p.protocol), scheme.c_str(), sizeof(p.protocol) - 1);
 
     if (scheme == "vless" || scheme == "trojan" || scheme == "hysteria2" || scheme == "hy2" || scheme == "hysteria") {
-        if (scheme == "hy2") strcpy(p.protocol, "hysteria2");
+        if (scheme == "hy2") {
+            strncpy_s(p.protocol, sizeof(p.protocol), "hysteria2", sizeof(p.protocol) - 1);
+        }
         size_t at_pos = uri.find('@', scheme_pos + 3);
         size_t hostport_start = scheme_pos + 3;
         if (at_pos != std::string::npos) {
-            strcpy(p.uuid, uri.substr(scheme_pos + 3, at_pos - (scheme_pos + 3)).c_str());
+            strncpy_s(p.uuid, sizeof(p.uuid), uri.substr(scheme_pos + 3, at_pos - (scheme_pos + 3)).c_str(), sizeof(p.uuid) - 1);
             hostport_start = at_pos + 1;
         }
 
@@ -26,12 +28,13 @@ Proxy parse_uri(const std::string& uri) {
         std::string hostport = uri.substr(hostport_start, hostport_end - hostport_start);
         size_t colon_pos = hostport.find(':');
         if (colon_pos != std::string::npos) {
-            strcpy(p.server, hostport.substr(0, colon_pos).c_str());
+            strncpy_s(p.server, sizeof(p.server), hostport.substr(0, colon_pos).c_str(), sizeof(p.server) - 1);
             p.port = std::stoi(hostport.substr(colon_pos + 1));
         }
 
         if (hash_pos < uri.length()) {
-            strcpy(p.name, url_decode(uri.substr(hash_pos + 1)).c_str());
+            std::string name_decoded = url_decode(uri.substr(hash_pos + 1));
+            strncpy_s(p.name, sizeof(p.name), name_decoded.c_str(), sizeof(p.name) - 1);
         }
 
         if (q_pos != std::string::npos && q_pos < hash_pos) {
@@ -47,27 +50,27 @@ Proxy parse_uri(const std::string& uri) {
                     std::string v = url_decode(kv.substr(eq + 1));
                     while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ')) v.pop_back();
 
-                    if (k == "type") strcpy(p.type, v.c_str());
-                    else if (k == "security") strcpy(p.security, v.c_str());
-                    else if (k == "sni" || k == "peer") strcpy(p.sni, v.c_str());
-                    else if (k == "fp") strcpy(p.fp, v.c_str());
-                    else if (k == "pbk") strcpy(p.pbk, v.c_str());
-                    else if (k == "sid") strcpy(p.sid, v.c_str());
-                    else if (k == "flow") strcpy(p.flow, v.c_str());
-                    else if (k == "path") strcpy(p.path, v.c_str());
-                    else if (k == "host") strcpy(p.host, v.c_str());
-                    else if (k == "alpn") strcpy(p.alpn, v.c_str());
-                    else if (k == "serviceName") strcpy(p.path, v.c_str());
-                    else if (k == "mode") strcpy(p.mode, v.c_str());
-                    else if (k == "encryption") strcpy(p.cipher, v.c_str());
-                    else if (k == "headerType") strcpy(p.type, v.c_str());
-                    else if (k == "obfs") strcpy(p.obfs, v.c_str());
-                    else if (k == "obfs-password" || k == "obfs-param" || k == "obfsParam" || k == "obfsparam") strcpy(p.obfs_pass, v.c_str());
-                    else if (k == "up" || k == "upmbps") strcpy(p.up, v.c_str());
-                    else if (k == "down" || k == "downmbps") strcpy(p.down, v.c_str());
-                    else if (k == "auth") strcpy(p.uuid, v.c_str());
+                    if (k == "type") { strncpy_s(p.type, sizeof(p.type), v.c_str(), sizeof(p.type) - 1); }
+                    else if (k == "security") { strncpy_s(p.security, sizeof(p.security), v.c_str(), sizeof(p.security) - 1); }
+                    else if (k == "sni" || k == "peer") { strncpy_s(p.sni, sizeof(p.sni), v.c_str(), sizeof(p.sni) - 1); }
+                    else if (k == "fp") { strncpy_s(p.fp, sizeof(p.fp), v.c_str(), sizeof(p.fp) - 1); }
+                    else if (k == "pbk") { strncpy_s(p.pbk, sizeof(p.pbk), v.c_str(), sizeof(p.pbk) - 1); }
+                    else if (k == "sid") { strncpy_s(p.sid, sizeof(p.sid), v.c_str(), sizeof(p.sid) - 1); }
+                    else if (k == "flow") { strncpy_s(p.flow, sizeof(p.flow), v.c_str(), sizeof(p.flow) - 1); }
+                    else if (k == "path") { strncpy_s(p.path, sizeof(p.path), v.c_str(), sizeof(p.path) - 1); }
+                    else if (k == "host") { strncpy_s(p.host, sizeof(p.host), v.c_str(), sizeof(p.host) - 1); }
+                    else if (k == "alpn") { strncpy_s(p.alpn, sizeof(p.alpn), v.c_str(), sizeof(p.alpn) - 1); }
+                    else if (k == "serviceName") { strncpy_s(p.path, sizeof(p.path), v.c_str(), sizeof(p.path) - 1); }
+                    else if (k == "mode") { strncpy_s(p.mode, sizeof(p.mode), v.c_str(), sizeof(p.mode) - 1); }
+                    else if (k == "encryption") { strncpy_s(p.cipher, sizeof(p.cipher), v.c_str(), sizeof(p.cipher) - 1); }
+                    else if (k == "headerType") { strncpy_s(p.type, sizeof(p.type), v.c_str(), sizeof(p.type) - 1); }
+                    else if (k == "obfs") { strncpy_s(p.obfs, sizeof(p.obfs), v.c_str(), sizeof(p.obfs) - 1); }
+                    else if (k == "obfs-password" || k == "obfs-param" || k == "obfsParam" || k == "obfsparam") { strncpy_s(p.obfs_pass, sizeof(p.obfs_pass), v.c_str(), sizeof(p.obfs_pass) - 1); }
+                    else if (k == "up" || k == "upmbps") { strncpy_s(p.up, sizeof(p.up), v.c_str(), sizeof(p.up) - 1); }
+                    else if (k == "down" || k == "downmbps") { strncpy_s(p.down, sizeof(p.down), v.c_str(), sizeof(p.down) - 1); }
+                    else if (k == "auth") { strncpy_s(p.uuid, sizeof(p.uuid), v.c_str(), sizeof(p.uuid) - 1); }
                     else if (k == "extra") {
-                        strncpy(p.extra, v.c_str(), sizeof(p.extra) - 1);
+                        strncpy_s(p.extra, sizeof(p.extra), v.c_str(), sizeof(p.extra) - 1);
                     }
                     else if (k != "type" && k != "security" && k != "sni" && k != "peer" && k != "fp" && k != "pbk" && k != "sid" && k != "host" && k != "path" && k != "alpn" && k != "serviceName" && k != "mode" && k != "flow" && k != "uuid" && k != "port" && k != "name" && k != "encryption" && k != "headerType" && k != "obfs" && k != "obfs-password" && k != "obfs-param" && k != "obfsParam" && k != "obfsparam" && k != "up" && k != "upmbps" && k != "down" && k != "downmbps" && k != "auth") {
                         std::string kebab;
@@ -83,12 +86,12 @@ Proxy parse_uri(const std::string& uri) {
                         }
                         
                         if (p.extra[0] == '\0') {
-                            strcpy(p.extra, "{");
+                            strncpy_s(p.extra, sizeof(p.extra), "{", sizeof(p.extra) - 1);
                         } else {
                             p.extra[strlen(p.extra) - 1] = ',';
                         }
                         std::string kv_json = "\"" + kebab + "\":" + v_json + "}";
-                        strncat(p.extra, kv_json.c_str(), sizeof(p.extra) - strlen(p.extra) - 1);
+                        strncat_s(p.extra, sizeof(p.extra), kv_json.c_str(), sizeof(p.extra) - strlen(p.extra) - 1);
                     }
                 }
                 start = amp + 1;
@@ -118,20 +121,33 @@ Proxy parse_uri(const std::string& uri) {
             }
             return v;
         };
-        strcpy(p.name, get_json_str("ps").c_str());
-        strcpy(p.server, get_json_str("add").c_str());
+        std::string ps_decoded = get_json_str("ps");
+        strncpy_s(p.name, sizeof(p.name), ps_decoded.c_str(), sizeof(p.name) - 1);
+        std::string server_decoded = get_json_str("add");
+        strncpy_s(p.server, sizeof(p.server), server_decoded.c_str(), sizeof(p.server) - 1);
         p.port = get_json_int("port");
         if (p.port == 0) {
             std::string ps = get_json_str("port");
             if (!ps.empty()) p.port = std::stoi(ps);
         }
-        strcpy(p.uuid, get_json_str("id").c_str());
-        strcpy(p.type, get_json_str("net").c_str());
-        strcpy(p.security, get_json_str("tls").c_str());
-        strcpy(p.path, get_json_str("path").c_str());
-        strcpy(p.host, get_json_str("host").c_str());
-        strcpy(p.sni, get_json_str("sni").c_str());
-        if (p.security[0] == 0 && get_json_str("tls") == "tls") strcpy(p.security, "tls");
+        std::string uuid_decoded = get_json_str("id");
+        strncpy_s(p.uuid, sizeof(p.uuid), uuid_decoded.c_str(), sizeof(p.uuid) - 1);
+        std::string type_decoded = get_json_str("net");
+        strncpy_s(p.type, sizeof(p.type), type_decoded.c_str(), sizeof(p.type) - 1);
+        std::string security_decoded = get_json_str("tls");
+        strncpy_s(p.security, sizeof(p.security), security_decoded.c_str(), sizeof(p.security) - 1);
+        std::string path_decoded = get_json_str("path");
+        strncpy_s(p.path, sizeof(p.path), path_decoded.c_str(), sizeof(p.path) - 1);
+        std::string host_decoded = get_json_str("host");
+        strncpy_s(p.host, sizeof(p.host), host_decoded.c_str(), sizeof(p.host) - 1);
+        std::string sni_decoded = get_json_str("sni");
+        strncpy_s(p.sni, sizeof(p.sni), sni_decoded.c_str(), sizeof(p.sni) - 1);
+        if (p.security[0] == 0) {
+            std::string tls_str = get_json_str("tls");
+            if (tls_str == "tls") {
+                strncpy_s(p.security, sizeof(p.security), "tls", sizeof(p.security) - 1);
+            }
+        }
     }
     return p;
 }
@@ -141,7 +157,8 @@ Proxy parse_xray_json(const std::string& obj) {
     if (obj.find("\"outbounds\"") == std::string::npos) return p;
     
     std::string remarks = json_extract_string(obj, "remarks");
-    strcpy(p.name, url_decode(remarks).c_str());
+    std::string remarks_decoded = url_decode(remarks);
+    strncpy_s(p.name, sizeof(p.name), remarks_decoded.c_str(), sizeof(p.name) - 1);
     
     size_t proxy_pos = obj.find("\"tag\": \"proxy\"");
     if (proxy_pos == std::string::npos) proxy_pos = obj.find("\"tag\":\"proxy\"");
@@ -163,56 +180,69 @@ Proxy parse_xray_json(const std::string& obj) {
     std::string proto = json_extract_string(outbound, "protocol");
     if (proto == "hysteria" && obj.find("\"version\": 2") != std::string::npos) proto = "hysteria2";
     else if (proto == "hysteria" && json_extract_int(outbound, "version") == 2) proto = "hysteria2";
-    strcpy(p.protocol, proto.c_str());
+    std::string proto_decoded = proto;
+    strncpy_s(p.protocol, sizeof(p.protocol), proto_decoded.c_str(), sizeof(p.protocol) - 1);
     
-    strcpy(p.server, json_extract_string(outbound, "address").c_str());
+    std::string server_decoded = json_extract_string(outbound, "address");
+    strncpy_s(p.server, sizeof(p.server), server_decoded.c_str(), sizeof(p.server) - 1);
     p.port = json_extract_int(outbound, "port");
     
     std::string id = json_extract_string(outbound, "id");
     if (id.empty()) id = json_extract_string(outbound, "auth");
     if (id.empty()) id = json_extract_string(outbound, "password");
     if (id.empty()) id = json_extract_string(outbound, "uuid");
-    strcpy(p.uuid, id.c_str());
+    std::string id_decoded = id;
+    strncpy_s(p.uuid, sizeof(p.uuid), id_decoded.c_str(), sizeof(p.uuid) - 1);
     
-    strcpy(p.flow, json_extract_string(outbound, "flow").c_str());
+    std::string flow_decoded = json_extract_string(outbound, "flow");
+    strncpy_s(p.flow, sizeof(p.flow), flow_decoded.c_str(), sizeof(p.flow) - 1);
 
     std::string net = json_extract_string(outbound, "network");
     if (net.empty()) net = json_extract_string(outbound, "type");
     if (net.empty()) net = json_extract_string(outbound, "net");
-    strcpy(p.type, net.c_str());
+    std::string net_decoded = net;
+    strncpy_s(p.type, sizeof(p.type), net_decoded.c_str(), sizeof(p.type) - 1);
 
     std::string sec = json_extract_string(outbound, "security");
     if (sec.empty()) sec = json_extract_string(outbound, "tls");
-    strcpy(p.security, sec.c_str());
+    std::string sec_decoded = sec;
+    strncpy_s(p.security, sizeof(p.security), sec_decoded.c_str(), sizeof(p.security) - 1);
 
     std::string sni = json_extract_string(outbound, "serverName");
     if (sni.empty()) sni = json_extract_string(outbound, "servername");
     if (sni.empty()) sni = json_extract_string(outbound, "sni");
     if (sni.empty()) sni = json_extract_string(outbound, "peer");
-    strcpy(p.sni, sni.c_str());
+    std::string sni_decoded = sni;
+    strncpy_s(p.sni, sizeof(p.sni), sni_decoded.c_str(), sizeof(p.sni) - 1);
 
     std::string fp = json_extract_string(outbound, "fingerprint");
     if (fp.empty()) fp = json_extract_string(outbound, "fp");
-    strcpy(p.fp, fp.c_str());
+    std::string fp_decoded = fp;
+    strncpy_s(p.fp, sizeof(p.fp), fp_decoded.c_str(), sizeof(p.fp) - 1);
 
     std::string pbk = json_extract_string(outbound, "publicKey");
     if (pbk.empty()) pbk = json_extract_string(outbound, "public_key");
     if (pbk.empty()) pbk = json_extract_string(outbound, "pbk");
-    strcpy(p.pbk, pbk.c_str());
+    std::string pbk_decoded = pbk;
+    strncpy_s(p.pbk, sizeof(p.pbk), pbk_decoded.c_str(), sizeof(p.pbk) - 1);
 
     std::string sid = json_extract_string(outbound, "shortId");
     if (sid.empty()) sid = json_extract_string(outbound, "short_id");
     if (sid.empty()) sid = json_extract_string(outbound, "sid");
-    strcpy(p.sid, sid.c_str());
+    std::string sid_decoded = sid;
+    strncpy_s(p.sid, sizeof(p.sid), sid_decoded.c_str(), sizeof(p.sid) - 1);
 
     std::string path = json_extract_string(outbound, "path");
     if (path.empty()) path = json_extract_string(outbound, "serviceName");
     if (path.empty()) path = json_extract_string(outbound, "service_name");
-    strcpy(p.path, path.c_str());
+    std::string path_decoded = path;
+    strncpy_s(p.path, sizeof(p.path), path_decoded.c_str(), sizeof(p.path) - 1);
+    p.path[sizeof(p.path) - 1] = '\0';
 
     std::string host = json_extract_string(outbound, "host");
     if (host.empty()) host = json_extract_string(outbound, "Host");
-    strcpy(p.host, host.c_str());
+    std::string host_decoded = host;
+    strncpy_s(p.host, sizeof(p.host), host_decoded.c_str(), sizeof(p.host) - 1);
     
     size_t alpn_pos = outbound.find("\"alpn\"");
     if (alpn_pos != std::string::npos) {
@@ -224,7 +254,8 @@ Proxy parse_xray_json(const std::string& obj) {
             if (q1 != std::string::npos) {
                 size_t q2 = alpn_arr.find("\"", q1 + 1);
                 if (q2 != std::string::npos) {
-                    strcpy(p.alpn, alpn_arr.substr(q1 + 1, q2 - q1 - 1).c_str());
+                    std::string alpn_decoded = alpn_arr.substr(q1 + 1, q2 - q1 - 1);
+                    strncpy_s(p.alpn, sizeof(p.alpn), alpn_decoded.c_str(), sizeof(p.alpn) - 1);
                 }
             }
         }
@@ -245,7 +276,8 @@ Proxy parse_xray_json(const std::string& obj) {
             }
             if (b_end > b_start) {
                 std::string extra_obj = outbound.substr(b_start, b_end - b_start + 1);
-                strncpy(p.extra, extra_obj.c_str(), sizeof(p.extra) - 1);
+                std::string extra_obj_decoded = outbound.substr(b_start, b_end - b_start + 1);
+                strncpy_s(p.extra, sizeof(p.extra), extra_obj_decoded.c_str(), sizeof(p.extra) - 1);
             }
         }
     }
@@ -336,7 +368,7 @@ std::vector<Rule> parse_xray_rules(const std::string& json) {
             Rule r = {0};
             std::string tag = json_extract_string(rule_obj, "outboundTag");
             if (tag.empty()) tag = json_extract_string(rule_obj, "outbound");
-            strncpy(r.outbound, tag.c_str(), sizeof(r.outbound) - 1);
+            strncpy_s(r.outbound, sizeof(r.outbound), tag.c_str(), sizeof(r.outbound) - 1);
 
             r.domains = json_extract_string_array(rule_obj, "domain");
             r.ips = json_extract_string_array(rule_obj, "ip");

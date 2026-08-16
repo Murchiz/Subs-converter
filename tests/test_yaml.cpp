@@ -1,10 +1,48 @@
 #include <iostream>
 #include <string>
+#include <vector>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
 
-int main() {
-    std::ifstream file("reference/meta.yaml");
+int main(int argc, char* argv[]) {
+    // Try to find reference/meta.yaml - check multiple locations
+    std::string meta_path;
+    
+    // Build search paths
+    std::vector<std::string> search_dirs;
+    
+    // From executable directory
+    if (argc > 0 && argv[0]) {
+        std::string exe_path = argv[0];
+        size_t pos = exe_path.find_last_of("/\\");
+        if (pos != std::string::npos) {
+            std::string exe_dir = exe_path.substr(0, pos);
+            search_dirs.push_back(exe_dir + "/reference");
+            search_dirs.push_back(exe_dir + "/../tests/reference");
+            search_dirs.push_back(exe_dir + "/../../tests/reference");
+        }
+    }
+    
+    // Relative paths
+    search_dirs.push_back("tests/reference");
+    search_dirs.push_back("reference");
+    
+    for (const auto& dir : search_dirs) {
+        std::string candidate = dir + "/meta.yaml";
+        std::ifstream test_file(candidate);
+        if (test_file.good()) {
+            meta_path = candidate;
+            break;
+        }
+    }
+    
+    if (meta_path.empty()) {
+        std::cerr << "reference/meta.yaml not found" << std::endl;
+        return 1;
+    }
+    
+    std::ifstream file(meta_path);
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string payload = buffer.str();

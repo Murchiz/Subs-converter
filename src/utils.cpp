@@ -1,9 +1,9 @@
 #include "utils.h"
 #include "types.h"
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <cctype>
 
 std::string base64_decode(const std::string &in) {
     std::string out;
@@ -29,7 +29,7 @@ std::string url_decode(const std::string& str) {
         if (str[i] == '%') {
             if (i + 2 < str.length()) {
                 int v;
-                sscanf(str.substr(i + 1, 2).c_str(), "%x", &v);
+                sscanf_s(str.substr(i + 1, 2).c_str(), "%x", &v);
                 ret += static_cast<char>(v);
                 i += 2;
             }

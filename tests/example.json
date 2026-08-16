@@ -1,0 +1,31 @@
+{
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "hysteria2",
+      "settings": {
+        "servers": [
+          {
+            "address": "example.com",
+            "port": 47006,
+            "auth": "example-uuid-0000-0000-0000-00000000",
+            "sni": "example.net"
+          }
+        ],
+        "up": "50",
+        "down": "100",
+        "obfs": {
+          "type": "salamander",
+          "password": ""
+        }
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["h3"]
+        }
+      }
+    }
+  ]
+}

@@ -3,18 +3,17 @@
 #include "parser.h"
 #include "generator.h"
 #include <thread>
-#include <stdio.h>
-#include <string.h>
-#include <ctype.h>
+#include <cstdio>
+#include <cstring>
+#include <cctype>
 
-static void copy_limited(char *dst, int cap, const char *src) {
+void copy_limited(char *dst, int cap, const char *src) {
     if (!dst || cap <= 0) return;
     if (!src) {
         dst[0] = '\0';
         return;
     }
-    strncpy(dst, src, cap - 1);
-    dst[cap - 1] = '\0';
+    strncpy_s(dst, cap, src, cap - 1);
 }
 
 static bool query_header(HINTERNET req, const wchar_t *name, char *out, int cap) {
@@ -199,7 +198,7 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
                  "http://127.0.0.1:25500/sub?target=%s&url=http%%3A%%2F%%2F127.0.0.1%%3A%d",
                  rt->target, rt->base_port);
     } else {
-        strcpy(full_url, rt->urls[url_index]);
+        copy_limited(full_url, sizeof(full_url), rt->urls[url_index]);
     }
 
     wchar_t wurl[4096];
@@ -217,7 +216,7 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
     }
 
     wchar_t host[256] = { 0 };
-    wcsncpy(host, uc.lpszHostName, uc.dwHostNameLength);
+    wcsncpy_s(host, 256, uc.lpszHostName, uc.dwHostNameLength);
 
     const wchar_t* ua = custom_ua;
     wchar_t wua[128] = {0};
@@ -254,7 +253,7 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
         MultiByteToWideChar(CP_UTF8, 0, g_Dev.os, -1, wO, 64);
         MultiByteToWideChar(CP_UTF8, 0, g_Dev.ver, -1, wV, 64);
         MultiByteToWideChar(CP_UTF8, 0, g_Dev.model, -1, wM, 256);
-        _snwprintf(hdr, sizeof(hdr) / sizeof(hdr[0]),
+        _snwprintf_s(hdr, sizeof(hdr) / sizeof(hdr[0]), _TRUNCATE,
                    L"x-hwid: %s\r\n"
                    L"x-device-os: %s\r\n"
                    L"x-ver-os: %s\r\n"
@@ -347,11 +346,11 @@ void handle_subconverter(SOCKET c, const std::string& req) {
                 temp_rt.url_count = g_Routes[i].url_count;
                 copy_limited(temp_rt.name, sizeof(temp_rt.name), g_Routes[i].name);
                 for (int j = 0; j < temp_rt.url_count; j++) {
-                    strcpy(temp_rt.urls[j], g_Routes[i].urls[j]);
+                    copy_limited(temp_rt.urls[j], sizeof(temp_rt.urls[j]), g_Routes[i].urls[j]);
                     if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
-                        strcpy(temp_rt.user_agents[j], "Happ/3.23.0");
+                        copy_limited(temp_rt.user_agents[j], sizeof(temp_rt.user_agents[j]), "Happ/3.23.0");
                     } else {
-                        strcpy(temp_rt.user_agents[j], g_Routes[i].user_agents[j]);
+                        copy_limited(temp_rt.user_agents[j], sizeof(temp_rt.user_agents[j]), g_Routes[i].user_agents[j]);
                     }
                 }
                 temp_rt.use_hwid = g_Routes[i].use_hwid;
@@ -366,11 +365,11 @@ void handle_subconverter(SOCKET c, const std::string& req) {
                 if (url == g_Routes[i].urls[j]) {
                     temp_rt.url_count = 1;
                     copy_limited(temp_rt.name, sizeof(temp_rt.name), g_Routes[i].name);
-                    strcpy(temp_rt.urls[0], g_Routes[i].urls[j]);
+                    copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), g_Routes[i].urls[j]);
                     if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
-                        strcpy(temp_rt.user_agents[0], "Happ/3.23.0");
+                        copy_limited(temp_rt.user_agents[0], sizeof(temp_rt.user_agents[0]), "Happ/3.23.0");
                     } else {
-                        strcpy(temp_rt.user_agents[0], g_Routes[i].user_agents[j]);
+                        copy_limited(temp_rt.user_agents[0], sizeof(temp_rt.user_agents[0]), g_Routes[i].user_agents[j]);
                     }
                     temp_rt.use_hwid = g_Routes[i].use_hwid;
                     matched_route = true;
@@ -382,7 +381,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     }
     
     if (temp_rt.url_count == 0) {
-        strcpy(temp_rt.urls[0], url.c_str());
+        copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
         temp_rt.url_count = 1;
     }
     temp_rt.use_hwid = 0;

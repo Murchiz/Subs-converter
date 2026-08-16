@@ -1,0 +1,4 @@
+vmess://eyJhZGQiOiIxMjcuMC4wLjEiLCJwb3J0IjoiMTA4MCIsImlkIjoiOTRhYzRjZGEtMTIzNC01Njc4LTlhYmMtZGVmMDExMjIzMzQ0In0=
+hysteria2://example-uuid-0000-0000-0000-00000000@example.com:47006?peer=example.net&upmbps=50&downmbps=100&alpn=h3#Node
+vless://94ac4cda-1234-5678-9abc-def011223344@example.org:47005?security=reality&sni=example.com&fp=firefox&type=tcp#Vless
+hysteria://mytoken@12.34.56.78:12345?peer=my-sni.com&upmbps=50&downmbps=100&alpn=h3&obfs=obfs-type#HysteriaNode

@@ -1,6 +1,6 @@
 #include "generator.h"
 #include "utils.h"
-#include <string.h>
+#include <cstring>
 
 std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>& rules) {
     std::string out = "mixed-port: 7890\n"

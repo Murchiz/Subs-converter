@@ -3,7 +3,7 @@
 #include "parser.h"
 #include "generator.h"
 #include "utils.h"
-#include <stdio.h>
+#include <cstdio>
 int reg_sz(HKEY root, const char *sub, const char *name, char *buf, DWORD cap) {
     HKEY hk;
     DWORD type = 0, sz = cap;
@@ -14,10 +14,10 @@ int reg_sz(HKEY root, const char *sub, const char *name, char *buf, DWORD cap) {
 }
 void dev_gather() {
     memset(&g_Dev, 0, sizeof(g_Dev));
-    strcpy(g_Dev.os, "Windows");
+    copy_limited(g_Dev.os, sizeof(g_Dev.os), "Windows");
 
     if (!reg_sz(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", "MachineGuid", g_Dev.hwid, sizeof(g_Dev.hwid)))
-        strcpy(g_Dev.hwid, "unknown");
+        copy_limited(g_Dev.hwid, sizeof(g_Dev.hwid), "unknown");
 
     typedef LONG(WINAPI *RGV)(OSVERSIONINFOW *);
     OSVERSIONINFOW v;
@@ -27,15 +27,15 @@ void dev_gather() {
     if (fn && fn(&v) == 0)
         snprintf(g_Dev.ver, sizeof(g_Dev.ver), "%lu.%lu.%lu", v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber);
     else
-        strcpy(g_Dev.ver, "10.0");
+        copy_limited(g_Dev.ver, sizeof(g_Dev.ver), "10.0");
 
     char mfr[128] = { 0 }, prod[128] = { 0 };
     reg_sz(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SystemInformation", "SystemManufacturer", mfr, sizeof(mfr));
     reg_sz(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SystemInformation", "SystemProductName", prod, sizeof(prod));
 
     if (mfr[0] && prod[0]) snprintf(g_Dev.model, sizeof(g_Dev.model), "%s %s", mfr, prod);
-    else if (prod[0]) strcpy(g_Dev.model, prod);
-    else strcpy(g_Dev.model, "Windows PC");
+    else if (prod[0]) copy_limited(g_Dev.model, sizeof(g_Dev.model), prod);
+    else copy_limited(g_Dev.model, sizeof(g_Dev.model), "Windows PC");
 }
 void load_config() {
     char cfg_path[MAX_PATH];
@@ -46,8 +46,9 @@ void load_config() {
     subc->is_subconverter = 1;
     subc->is_convert = 0;
 
-    FILE *f = fopen(cfg_path, "r");
-    if (!f) {
+    FILE *f = nullptr;
+    errno_t err = fopen_s(&f, cfg_path, "r");
+    if (err != 0 || !f) {
         logm("Warning: Cannot open %s\n", cfg_path);
         return;
     }
@@ -69,16 +70,17 @@ void load_config() {
             r->is_convert = 0;
             r->is_subconverter = 0;
             r->url_count = link_count;
-            strcpy(r->name, sub_name);
+            copy_limited(r->name, sizeof(r->name), sub_name);
             for (int i = 0; i < link_count; i++) {
-                strcpy(r->urls[i], links[i]);
-                strcpy(r->user_agents[i], uas[i]);
+                copy_limited(r->urls[i], sizeof(r->urls[i]), links[i]);
+                copy_limited(r->user_agents[i], sizeof(r->user_agents[i]), uas[i]);
             }
             r->use_hwid = hwid;
 
             if (converts[0]) {
                 int c_idx = 1;
-                char *tok = strtok(converts, ", \t");
+                char *context = nullptr;
+                char *tok = strtok_s(converts, ", 	", &context);
                 while (tok) {
                     if (g_RouteCount >= 64) break;
                     Route *rc = &g_Routes[g_RouteCount++];
@@ -87,12 +89,12 @@ void load_config() {
                     rc->is_subconverter = 0;
                     rc->base_port = port;
                     rc->url_count = 1;
-                    strcpy(rc->target, tok);
-                    strcpy(rc->name, r->name);
+                    copy_limited(rc->target, sizeof(rc->target), tok);
+                    copy_limited(rc->name, sizeof(rc->name), r->name);
                     // Conversion routes do not need user agents, they fetch from local 25500
                     rc->use_hwid = 0;
                     c_idx++;
-                    tok = strtok(NULL, ", \t");
+                    tok = strtok_s(nullptr, ", 	", &context);
                 }
             }
         }
@@ -127,21 +129,21 @@ void load_config() {
         if (in_sub) {
             if (_strnicmp(k, "link", 4) == 0 && link_count < 8) {
                 int idx = (strlen(k) > 4) ? atoi(k + 4) - 1 : link_count;
-                if (idx >= 0 && idx < 8) { strcpy(links[idx], v); if (idx >= link_count) link_count = idx + 1; }
+                if (idx >= 0 && idx < 8) { copy_limited(links[idx], sizeof(links[idx]), v); if (idx >= link_count) link_count = idx + 1; }
             }
             else if (_strnicmp(k, "user_agent", 10) == 0) {
                 int idx = (strlen(k) > 10) ? atoi(k + 10) - 1 : 0;
-                if (idx >= 0 && idx < 8) strcpy(uas[idx], v);
+                if (idx >= 0 && idx < 8) copy_limited(uas[idx], sizeof(uas[idx]), v);
             }
-            else if (_stricmp(k, "name") == 0) strcpy(sub_name, v);
+            else if (_stricmp(k, "name") == 0) copy_limited(sub_name, sizeof(sub_name), v);
             else if (_stricmp(k, "port") == 0) port = atoi(v);
             else if (_stricmp(k, "hwid") == 0) hwid = (_stricmp(v, "true") == 0 || _stricmp(v, "1") == 0);
-            else if (_stricmp(k, "converts") == 0) strcpy(converts, v);
+            else if (_stricmp(k, "converts") == 0) copy_limited(converts, sizeof(converts), v);
         } else if (in_dev) {
-            if (_stricmp(k, "hwid") == 0) strcpy(g_Dev.hwid, v);
-            else if (_stricmp(k, "os") == 0) strcpy(g_Dev.os, v);
-            else if (_stricmp(k, "ver") == 0) strcpy(g_Dev.ver, v);
-            else if (_stricmp(k, "model") == 0) strcpy(g_Dev.model, v);
+            if (_stricmp(k, "hwid") == 0) copy_limited(g_Dev.hwid, sizeof(g_Dev.hwid), v);
+            else if (_stricmp(k, "os") == 0) copy_limited(g_Dev.os, sizeof(g_Dev.os), v);
+            else if (_stricmp(k, "ver") == 0) copy_limited(g_Dev.ver, sizeof(g_Dev.ver), v);
+            else if (_stricmp(k, "model") == 0) copy_limited(g_Dev.model, sizeof(g_Dev.model), v);
         }
     }
     commit_sub();
@@ -253,7 +255,7 @@ void run_convert(int argc, char **argv) {
     std::string outfile = (argc >= 5) ? argv[4] : "output.txt";
 
     Route temp_rt = { 0 };
-    strcpy(temp_rt.urls[0], url.c_str());
+    copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
     temp_rt.url_count = 1;
 
     char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
@@ -386,8 +388,9 @@ void run_convert(int argc, char **argv) {
             out_payload = gen_v2ray(all_proxies);
         }
         
-        FILE *f = fopen(outfile.c_str(), "wb");
-        if (f) {
+        FILE *f = nullptr;
+        errno_t err = fopen_s(&f, outfile.c_str(), "wb");
+        if (err == 0 && f) {
             fwrite(out_payload.c_str(), 1, out_payload.length(), f);
             fclose(f);
             printf("Successfully converted to %s\n", outfile.c_str());

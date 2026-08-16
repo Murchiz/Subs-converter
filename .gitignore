@@ -1,17 +1,28 @@
+# IDE
+.vscode/
+.idea/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+# OS
+.DS_Store
+Thumbs.db
 # CMake artifacts
 build/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
-
 # IDE and VS
 .vs/
 out/
 *.suo
 *.user
 .cache
-
+# Test fixtures (generated from private references, deleted after build)
+ref1.json
+ref2.json
 # Build outputs
 *.exe
 *.obj

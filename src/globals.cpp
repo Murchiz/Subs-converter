@@ -1,6 +1,6 @@
 #include "types.h"
-#include <stdio.h>
-#include <stdarg.h>
+#include <cstdio>
+#include <cstdarg>
 
 Route g_Routes[64];
 int g_RouteCount = 0;
