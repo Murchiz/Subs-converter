@@ -9,6 +9,9 @@
 #include <cstdint>
 #include <cwchar>
 #include <cstdlib>
+#include <cerrno>
+#include <concepts>
+#include <string_view>
 
 #ifdef _MSC_VER
 #define _CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES 1
@@ -16,7 +19,7 @@
 
 namespace safe_crt {
 
-inline int strncpy_s_wrapper(char *dest, size_t destsz, const char *src, size_t count) {
+inline int strncpy_s_wrapper(char *dest, size_t destsz, const char *src, size_t count) noexcept {
 #ifdef _MSC_VER
     return strncpy_s(dest, destsz, src, count);
 #else
@@ -36,7 +39,7 @@ inline int strncpy_s_wrapper(char *dest, size_t destsz, const char *src, size_t 
 #endif
 }
 
-inline int strncat_s_wrapper(char *dest, size_t destsz, const char *src, size_t count) {
+inline int strncat_s_wrapper(char *dest, size_t destsz, const char *src, size_t count) noexcept {
 #ifdef _MSC_VER
     return strncat_s(dest, destsz, src, count);
 #else
@@ -52,32 +55,29 @@ inline int strncat_s_wrapper(char *dest, size_t destsz, const char *src, size_t 
 #endif
 }
 
-inline int sscanf_s_wrapper(const char *buffer, const char *format, ...) {
+inline int sscanf_s_wrapper(const char *buffer, const char *format, ...) noexcept {
+    va_list args;
+    va_start(args, format);
 #ifdef _MSC_VER
-    va_list args;
-    va_start(args, format);
     int result = vsscanf_s(buffer, format, args);
-    va_end(args);
-    return result;
 #else
-    va_list args;
-    va_start(args, format);
     int result = vsscanf(buffer, format, args);
+#endif
     va_end(args);
     return result;
-#endif
 }
 
-inline errno_t fopen_s_wrapper(FILE **pf, const char *filename, const char *mode) {
+inline errno_t fopen_s_wrapper(FILE **pf, const char *filename, const char *mode) noexcept {
 #ifdef _MSC_VER
     return fopen_s(pf, filename, mode);
 #else
+    if (!pf) return EINVAL;
     *pf = fopen(filename, mode);
     return *pf ? 0 : errno;
 #endif
 }
 
-inline char *strtok_s_wrapper(char *str, const char *delim, char **context) {
+inline char *strtok_s_wrapper(char *str, const char *delim, char **context) noexcept {
 #ifdef _MSC_VER
     return strtok_s(str, delim, context);
 #else
@@ -85,7 +85,7 @@ inline char *strtok_s_wrapper(char *str, const char *delim, char **context) {
 #endif
 }
 
-inline int wcsncpy_s_wrapper(wchar_t *dest, size_t destsz, const wchar_t *src, size_t count) {
+inline int wcsncpy_s_wrapper(wchar_t *dest, size_t destsz, const wchar_t *src, size_t count) noexcept {
 #ifdef _MSC_VER
     return wcsncpy_s(dest, destsz, src, count);
 #else
@@ -105,41 +105,49 @@ inline int wcsncpy_s_wrapper(wchar_t *dest, size_t destsz, const wchar_t *src, s
 #endif
 }
 
-inline int snwprintf_s_wrapper(wchar_t *buffer, size_t count, const wchar_t *format, ...) {
+inline int snwprintf_s_wrapper(wchar_t *buffer, size_t count, const wchar_t *format, ...) noexcept {
+    va_list args;
+    va_start(args, format);
 #ifdef _MSC_VER
-    va_list args;
-    va_start(args, format);
     int result = _vsnwprintf_s(buffer, count, _TRUNCATE, format, args);
-    va_end(args);
-    return result;
 #else
-    va_list args;
-    va_start(args, format);
     int result = vswprintf(buffer, count, format, args);
+#endif
     va_end(args);
     return result;
-#endif
 }
 
-inline int snprintf_s_wrapper(char *buffer, size_t count, const char *format, ...) {
+inline int snprintf_s_wrapper(char *buffer, size_t count, const char *format, ...) noexcept {
+    va_list args;
+    va_start(args, format);
 #ifdef _MSC_VER
-    va_list args;
-    va_start(args, format);
     int result = _vsnprintf_s(buffer, count, _TRUNCATE, format, args);
-    va_end(args);
-    return result;
 #else
-    va_list args;
-    va_start(args, format);
     int result = vsnprintf(buffer, count, format, args);
+#endif
     va_end(args);
     return result;
-#endif
 }
 
 } // namespace safe_crt
 
-// Macros for easier use
+// Helper template functions using C++23 std::size
+template <size_t N>
+inline int safe_strncpy(char (&dest)[N], const char *src, size_t count = N - 1) noexcept {
+    return safe_crt::strncpy_s_wrapper(dest, N, src, count);
+}
+
+template <size_t N>
+inline int safe_strncat(char (&dest)[N], const char *src, size_t count = N - 1) noexcept {
+    return safe_crt::strncat_s_wrapper(dest, N, src, count);
+}
+
+template <size_t N>
+inline int safe_wcsncpy(wchar_t (&dest)[N], const wchar_t *src, size_t count = N - 1) noexcept {
+    return safe_crt::wcsncpy_s_wrapper(dest, N, src, count);
+}
+
+// Macros for compatibility
 #define SAFE_STRNCPY(dest, src, count) safe_crt::strncpy_s_wrapper(dest, sizeof(dest), src, count)
 #define SAFE_STRNCAT(dest, src, count) safe_crt::strncat_s_wrapper(dest, sizeof(dest), src, count)
 #define SAFE_SSCANF(buffer, format, ...) safe_crt::sscanf_s_wrapper(buffer, format, __VA_ARGS__)

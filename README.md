@@ -2,7 +2,7 @@
 
 [![Build and Release](https://github.com/Murchiz/Subs-converter/actions/workflows/build.yml/badge.svg)](https://github.com/Murchiz/Subs-converter/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![C++14](https://img.shields.io/badge/Language-C%2B%2B14-00599C.svg)](https://en.cppreference.com/w/cpp/14)
+[![C++23](https://img.shields.io/badge/Language-C%2B%2B23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
 
 **SubBridge** is a high-performance, lightweight local proxy subscription converter, aggregator, and bridge written in C++ using native Windows APIs (`WinHTTP`, `Winsock2`).
 

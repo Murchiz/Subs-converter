@@ -1,53 +1,57 @@
 #include "parser.h"
 #include "generator.h"
 #include "utils.h"
-#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <cassert>
-#include <string.h>
+#include <cstring>
+#include <filesystem>
+#include <print>
+#include <string_view>
+
+namespace fs = std::filesystem;
 
 void test_base64() {
     std::string encoded = "SGVsbG8gV29ybGQ="; // "Hello World"
     std::string decoded = base64_decode(encoded);
     assert(decoded == "Hello World");
-    std::cout << "test_base64 passed.\n";
+    std::println("test_base64 passed.");
 }
 
 void test_parse_uri() {
     std::string uri = "vmess://eyJhZGQiOiIxMjcuMC4wLjEiLCJwb3J0IjoiMTA4MCIsImlkIjoiOTRhYzRjZGEtMTIzNC01Njc4LTlhYmMtZGVmMDExMjIzMzQ0In0=";
     Proxy p = parse_uri(uri);
-    assert(strcmp(p.protocol, "vmess") == 0);
-    assert(strcmp(p.server, "127.0.0.1") == 0);
+    assert(std::string_view(p.protocol) == "vmess");
+    assert(std::string_view(p.server) == "127.0.0.1");
     assert(p.port == 1080);
-    assert(strcmp(p.uuid, "94ac4cda-1234-5678-9abc-def011223344") == 0);
+    assert(std::string_view(p.uuid) == "94ac4cda-1234-5678-9abc-def011223344");
     
     // Test Hysteria 1 URI
     std::string hy_uri = "hysteria://mytoken@12.34.56.78:12345?peer=my-sni.com&upmbps=50&downmbps=100&alpn=h3&obfs=obfs-type#HysteriaNode";
     Proxy p_hy = parse_uri(hy_uri);
-    assert(strcmp(p_hy.protocol, "hysteria") == 0);
-    assert(strcmp(p_hy.server, "12.34.56.78") == 0);
+    assert(std::string_view(p_hy.protocol) == "hysteria");
+    assert(std::string_view(p_hy.server) == "12.34.56.78");
     assert(p_hy.port == 12345);
-    assert(strcmp(p_hy.uuid, "mytoken") == 0);
-    assert(strcmp(p_hy.sni, "my-sni.com") == 0);
-    assert(strcmp(p_hy.up, "50") == 0);
-    assert(strcmp(p_hy.down, "100") == 0);
-    assert(strcmp(p_hy.alpn, "h3") == 0);
-    assert(strcmp(p_hy.obfs, "obfs-type") == 0);
-    assert(strcmp(p_hy.name, "HysteriaNode") == 0);
+    assert(std::string_view(p_hy.uuid) == "mytoken");
+    assert(std::string_view(p_hy.sni) == "my-sni.com");
+    assert(std::string_view(p_hy.up) == "50");
+    assert(std::string_view(p_hy.down) == "100");
+    assert(std::string_view(p_hy.alpn) == "h3");
+    assert(std::string_view(p_hy.obfs) == "obfs-type");
+    assert(std::string_view(p_hy.name) == "HysteriaNode");
 
     // Test generator output for Hysteria 1
     std::vector<Proxy> list = { p_hy };
     std::string base64_v2ray = gen_v2ray(list);
     std::string raw_v2ray = base64_decode(base64_v2ray);
-    assert(raw_v2ray.find("hysteria://mytoken@12.34.56.78:12345?peer=my-sni.com&obfs=obfs-type&upmbps=50&downmbps=100&alpn=h3#HysteriaNode") != std::string::npos);
+    assert(raw_v2ray.contains("hysteria://mytoken@12.34.56.78:12345?peer=my-sni.com&obfs=obfs-type&upmbps=50&downmbps=100&alpn=h3#HysteriaNode"));
 
-    std::cout << "test_parse_uri passed.\n";
+    std::println("test_parse_uri passed.");
 }
 
 void test_parse_json() {
     // 1. Test example.json
-    {
+    if (fs::exists("example.json")) {
         std::ifstream file("example.json");
         assert(file.is_open());
         std::stringstream buffer;
@@ -55,16 +59,17 @@ void test_parse_json() {
         std::vector<Proxy> proxies = parse_proxies(buffer.str());
         assert(proxies.size() == 1);
         const auto& p = proxies[0];
-        assert(strcmp(p.protocol, "hysteria2") == 0);
-        assert(strcmp(p.server, "example.com") == 0);
+        assert(std::string_view(p.protocol) == "hysteria2");
+        assert(std::string_view(p.server) == "example.com");
         assert(p.port == 47006);
-        assert(strcmp(p.uuid, "example-uuid-0000-0000-0000-00000000") == 0);
-        assert(strcmp(p.sni, "example.net") == 0);
-        assert(strcmp(p.alpn, "h3") == 0);
+        assert(std::string_view(p.uuid) == "example-uuid-0000-0000-0000-00000000");
+        assert(std::string_view(p.sni) == "example.net");
+        assert(std::string_view(p.alpn) == "h3");
+
     }
 
     // 2. Test fetched_sub.json
-    {
+    if (fs::exists("fetched_sub.json")) {
         std::ifstream file("fetched_sub.json");
         assert(file.is_open());
         std::stringstream buffer;
@@ -74,9 +79,10 @@ void test_parse_json() {
         int hysteria_cnt = 0;
         int vless_cnt = 0;
         for (const auto& p : proxies) {
-            if (strcmp(p.protocol, "hysteria2") == 0 || strcmp(p.protocol, "hysteria") == 0) {
+            std::string_view proto = p.protocol;
+            if (proto == "hysteria2" || proto == "hysteria") {
                 hysteria_cnt++;
-            } else if (strcmp(p.protocol, "vless") == 0) {
+            } else if (proto == "vless") {
                 vless_cnt++;
             }
         }
@@ -84,11 +90,15 @@ void test_parse_json() {
         assert(vless_cnt == 14);
     }
     
-    std::cout << "test_parse_json passed.\n";
+    std::println("test_parse_json passed.");
 }
 
 void test_rules() {
-    std::ifstream file("references/original.json");
+    std::string filename = fs::exists("references/original.json") ? "references/original.json" :
+                          (fs::exists("../references/original.json") ? "../references/original.json" : "");
+    if (filename.empty()) return;
+
+    std::ifstream file(filename);
     if (!file.is_open()) return;
     std::stringstream buffer;
     buffer << file.rdbuf();
@@ -97,34 +107,32 @@ void test_rules() {
     std::vector<Proxy> proxies = parse_proxies(content);
     std::vector<Rule> rules = parse_xray_rules(content);
     
-    std::cout << "Parsed " << rules.size() << " rules from original.json:\n";
+    std::println("Parsed {} rules from original.json:", rules.size());
     for (size_t i = 0; i < rules.size(); i++) {
-        std::cout << " Rule #" << i << ": outbound=" << rules[i].outbound
-                  << ", domains=" << rules[i].domains.size()
-                  << ", ips=" << rules[i].ips.size()
-                  << ", protocols=" << rules[i].protocols.size()
-                  << ", port=" << rules[i].port << "\n";
+        std::println(" Rule #{}: outbound={}, domains={}, ips={}, protocols={}, port={}",
+                     i, rules[i].outbound, rules[i].domains.size(),
+                     rules[i].ips.size(), rules[i].protocols.size(), rules[i].port);
     }
     
     std::string clash = gen_clash(proxies, rules);
     std::string singbox = gen_singbox(proxies, "android", rules);
     
-    std::cout << "Clash rule generation contains DOMAIN-SUFFIX: " 
-              << (clash.find("DOMAIN-SUFFIX,img.avito.st,DIRECT") != std::string::npos ? "YES" : "NO") << "\n";
-    std::cout << "Clash rule generation contains 255.255.255.255/32: " 
-              << (clash.find("IP-CIDR,255.255.255.255/32,DIRECT,no-resolve") != std::string::npos ? "YES" : "NO") << "\n";
-    std::cout << "Singbox rule generation contains domain_suffix: "
-              << (singbox.find("img.avito.st") != std::string::npos ? "YES" : "NO") << "\n";
-    std::cout << "Singbox rule has no 'type: field': "
-              << (singbox.find("\"type\":\"field\"") == std::string::npos ? "YES" : "NO") << "\n";
+    std::println("Clash rule generation contains DOMAIN-SUFFIX: {}", 
+                 clash.contains("DOMAIN-SUFFIX,img.avito.st,DIRECT") ? "YES" : "NO");
+    std::println("Clash rule generation contains 255.255.255.255/32: {}", 
+                 clash.contains("IP-CIDR,255.255.255.255/32,DIRECT,no-resolve") ? "YES" : "NO");
+    std::println("Singbox rule generation contains domain_suffix: {}", 
+                 singbox.contains("img.avito.st") ? "YES" : "NO");
+    std::println("Singbox rule has no 'type: field': {}", 
+                 !singbox.contains("\"type\":\"field\"") ? "YES" : "NO");
     
-    assert(clash.find("IP-CIDR,255.255.255.255/32,DIRECT,no-resolve") != std::string::npos);
-    assert(singbox.find("\"type\":\"field\"") == std::string::npos);
-    std::cout << "test_rules passed.\n";
+    assert(clash.contains("IP-CIDR,255.255.255.255/32,DIRECT,no-resolve"));
+    assert(!singbox.contains("\"type\":\"field\""));
+    std::println("test_rules passed.");
 }
 
 void test_clash_to_singbox_and_xray() {
-    std::string clash_yaml = 
+    std::string_view clash_yaml = 
         "mixed-port: 7890\n"
         "proxies:\n"
         "  - name: \"Germany Reality\"\n"
@@ -159,80 +167,89 @@ void test_clash_to_singbox_and_xray() {
 
     std::vector<Proxy> proxies = parse_proxies(clash_yaml);
     assert(proxies.size() == 3);
-    assert(strcmp(proxies[0].protocol, "vless") == 0);
-    assert(strcmp(proxies[0].security, "reality") == 0);
-    assert(strcmp(proxies[0].server, "example.org") == 0);
+    assert(std::string_view(proxies[0].protocol) == "vless");
+    assert(std::string_view(proxies[0].security) == "reality");
+    assert(std::string_view(proxies[0].server) == "example.org");
     assert(proxies[0].port == 47005);
-    assert(strcmp(proxies[0].pbk, "example-public-key") == 0);
+    assert(std::string_view(proxies[0].pbk) == "example-public-key");
 
-    assert(strcmp(proxies[1].protocol, "https") == 0);
+
+    assert(std::string_view(proxies[1].protocol) == "https");
     assert(proxies[1].port == 8443);
 
-    assert(strcmp(proxies[2].protocol, "shadowsocks") == 0);
-    assert(strcmp(proxies[2].cipher, "aes-256-gcm") == 0);
+    assert(std::string_view(proxies[2].protocol) == "shadowsocks");
+    assert(std::string_view(proxies[2].cipher) == "aes-256-gcm");
 
     std::vector<Rule> rules = parse_xray_rules(clash_yaml);
     assert(rules.size() >= 2);
 
     // Singbox generation
     std::string sb = gen_singbox(proxies, "android", rules);
-    assert(sb.find("\"type\": \"https\"") == std::string::npos); // NO "type": "https"
-    assert(sb.find("\"type\": \"http\"") != std::string::npos);   // Translated to "http" with TLS
-    assert(sb.find("\"type\": \"shadowsocks\"") != std::string::npos);
-    assert(sb.find("\"method\": \"aes-256-gcm\"") != std::string::npos);
-    assert(sb.find("\"public_key\": \"example-public-key\"") != std::string::npos);
+    assert(!sb.contains("\"type\": \"https\"")); // NO "type": "https"
+    assert(sb.contains("\"type\": \"http\""));   // Translated to "http" with TLS
+    assert(sb.contains("\"type\": \"shadowsocks\""));
+    assert(sb.contains("\"method\": \"aes-256-gcm\""));
+    assert(sb.contains("\"public_key\": \"example-public-key\""));
+
 
     // Xray generation
     std::string xray = gen_xray(proxies, "My Profile", rules);
-    assert(xray.find("\"routing\"") != std::string::npos);
-    assert(xray.find("\"inbounds\"") != std::string::npos);
-    assert(xray.find("\"outbounds\"") != std::string::npos);
-    assert(xray.find("\"protocol\": \"vless\"") != std::string::npos);
-    assert(xray.find("\"security\": \"reality\"") != std::string::npos);
-    assert(xray.find("\"remarks\": \"My Profile\"") != std::string::npos);
+    assert(xray.contains("\"routing\""));
+    assert(xray.contains("\"inbounds\""));
+    assert(xray.contains("\"outbounds\""));
+    assert(xray.contains("\"protocol\": \"vless\""));
+    assert(xray.contains("\"security\": \"reality\""));
+    assert(xray.contains("\"remarks\": \"My Profile\""));
 
-    std::cout << "test_clash_to_singbox_and_xray passed.\n";
+    std::println("test_clash_to_singbox_and_xray passed.");
 }
 
 void test_xray_grpc_roundtrip() {
-    std::ifstream file("reference/original.json");
-    if (!file.is_open()) file.open("../reference/original.json");
-    if (!file.is_open()) file.open("../../reference/original.json");
-    if (file.is_open()) {
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string content = buffer.str();
+    std::string filename;
+    for (const auto& path : {"reference/original.json", "../reference/original.json", "../../reference/original.json"}) {
+        if (fs::exists(path)) {
+            filename = path;
+            break;
+        }
+    }
+    if (!filename.empty()) {
+        std::ifstream file(filename);
+        if (file.is_open()) {
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            std::string content = buffer.str();
 
-        std::vector<Proxy> proxies = parse_proxies(content);
-        assert(proxies.size() == 1);
-        assert(strcmp(proxies[0].protocol, "vless") == 0);
-        assert(strcmp(proxies[0].type, "grpc") == 0);
-        assert(strcmp(proxies[0].path, "qwen-services-8443") == 0);
-        assert(strcmp(proxies[0].sni, "chat.qwen.ai") == 0);
-        assert(strcmp(proxies[0].pbk, "sm4JzfsMkmDUreMh_2BQQu8IZIrWYja9qgF2mxFvIUo") == 0);
-        assert(strcmp(proxies[0].sid, "BDD9BC8C2A0F70D0") == 0);
+            std::vector<Proxy> proxies = parse_proxies(content);
+            assert(proxies.size() == 1);
+            assert(std::string_view(proxies[0].protocol) == "vless");
+            assert(std::string_view(proxies[0].type) == "grpc");
+            assert(std::string_view(proxies[0].path) == "qwen-services-8443");
+            assert(std::string_view(proxies[0].sni) == "chat.qwen.ai");
+            assert(std::string_view(proxies[0].pbk) == "sm4JzfsMkmDUreMh_2BQQu8IZIrWYja9qgF2mxFvIUo");
+            assert(std::string_view(proxies[0].sid) == "BDD9BC8C2A0F70D0");
 
-        std::vector<Rule> rules = parse_xray_rules(content);
-        std::string clash_yaml = gen_clash(proxies, rules);
-        assert(clash_yaml.find("grpc-service-name: qwen-services-8443") != std::string::npos);
+            std::vector<Rule> rules = parse_xray_rules(content);
+            std::string clash_yaml = gen_clash(proxies, rules);
+            assert(clash_yaml.contains("grpc-service-name: qwen-services-8443"));
 
-        std::vector<Proxy> re_proxies = parse_proxies(clash_yaml);
-        assert(re_proxies.size() == 1);
-        assert(strcmp(re_proxies[0].path, "qwen-services-8443") == 0);
-        assert(strcmp(re_proxies[0].type, "grpc") == 0);
+            std::vector<Proxy> re_proxies = parse_proxies(clash_yaml);
+            assert(re_proxies.size() == 1);
+            assert(std::string_view(re_proxies[0].path) == "qwen-services-8443");
+            assert(std::string_view(re_proxies[0].type) == "grpc");
 
-        std::string re_xray = gen_xray(re_proxies, "🇪🇪Эстония 2 test", rules);
-        assert(re_xray.find("\"serviceName\": \"qwen-services-8443\"") != std::string::npos);
+            std::string re_xray = gen_xray(re_proxies, "🇪🇪Эстония 2 test", rules);
+            assert(re_xray.contains("\"serviceName\": \"qwen-services-8443\""));
 
-        std::string re_sb = gen_singbox(re_proxies, "android", rules);
-        assert(re_sb.find("\"service_name\": \"qwen-services-8443\"") != std::string::npos);
+            std::string re_sb = gen_singbox(re_proxies, "android", rules);
+            assert(re_sb.contains("\"service_name\": \"qwen-services-8443\""));
 
-        std::cout << "test_xray_grpc_roundtrip passed.\n";
+            std::println("test_xray_grpc_roundtrip passed.");
+        }
     }
 }
 
 void test_multi_xray_json_subscription() {
-    std::string multi_json = 
+    std::string_view multi_json = 
         "[\n"
         "  {\n"
         "    \"remarks\": \"Server-US\",\n"
@@ -259,37 +276,39 @@ void test_multi_xray_json_subscription() {
 
     std::vector<Proxy> proxies = parse_proxies(multi_json);
     assert(proxies.size() == 2);
-    assert(strcmp(proxies[0].name, "Server-US") == 0);
-    assert(strcmp(proxies[0].protocol, "vless") == 0);
-    assert(strcmp(proxies[0].server, "1.1.1.1") == 0);
+    assert(std::string_view(proxies[0].name) == "Server-US");
+    assert(std::string_view(proxies[0].protocol) == "vless");
+    assert(std::string_view(proxies[0].server) == "1.1.1.1");
     assert(proxies[0].port == 443);
 
-    assert(strcmp(proxies[1].name, "Server-DE") == 0);
-    assert(strcmp(proxies[1].protocol, "trojan") == 0);
-    assert(strcmp(proxies[1].server, "2.2.2.2") == 0);
-    assert(strcmp(proxies[1].path, "de-grpc") == 0);
+    assert(std::string_view(proxies[1].name) == "Server-DE");
+    assert(std::string_view(proxies[1].protocol) == "trojan");
+    assert(std::string_view(proxies[1].server) == "2.2.2.2");
+    assert(std::string_view(proxies[1].path) == "de-grpc");
 
     std::string xray_links = gen_v2ray(proxies);
     assert(!xray_links.empty());
     std::string decoded_links = base64_decode(xray_links);
-    assert(decoded_links.find("vless://") != std::string::npos);
-    assert(decoded_links.find("trojan://") != std::string::npos);
-    assert(decoded_links.find("serviceName=de-grpc") != std::string::npos);
+    assert(decoded_links.contains("vless://"));
+    assert(decoded_links.contains("trojan://"));
+    assert(decoded_links.contains("serviceName=de-grpc"));
 
-    std::cout << "test_multi_xray_json_subscription passed.\n";
+    std::println("test_multi_xray_json_subscription passed.");
 }
 
 int main() {
-    std::cout << "Running tests...\n";
+    std::println("Running tests...");
     test_base64();
     test_parse_uri();
     test_rules();
     test_clash_to_singbox_and_xray();
     test_xray_grpc_roundtrip();
     test_multi_xray_json_subscription();
-    std::cout << "All tests passed successfully.\n";
+    std::println("All tests passed successfully.");
     return 0;
 }
+
+
 
 
 

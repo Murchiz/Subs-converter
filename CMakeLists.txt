@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(SubBridge VERSION 1.0)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable secure CRT template overloads (must be before any standard header includes)
 add_compile_definitions(_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES=1)

@@ -2,10 +2,14 @@
 #include "utils.h"
 #include "parser.h"
 #include "generator.h"
+#include "safe_crt.h"
 #include <thread>
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <format>
+#include <string_view>
+#include <algorithm>
 
 void copy_limited(char *dst, int cap, const char *src) {
     if (!dst || cap <= 0) return;
@@ -13,10 +17,20 @@ void copy_limited(char *dst, int cap, const char *src) {
         dst[0] = '\0';
         return;
     }
-    strncpy_s(dst, cap, src, cap - 1);
+    safe_crt::strncpy_s_wrapper(dst, static_cast<size_t>(cap), src, static_cast<size_t>(cap - 1));
 }
 
-static bool query_header(HINTERNET req, const wchar_t *name, char *out, int cap) {
+namespace {
+
+struct WinHttpHandleCloser {
+    void operator()(HINTERNET h) const noexcept {
+        if (h) WinHttpCloseHandle(h);
+    }
+};
+
+using ScopedHInternet = std::unique_ptr<void, WinHttpHandleCloser>;
+
+bool query_header(HINTERNET req, const wchar_t *name, char *out, int cap) {
     if (!out || cap <= 0) return false;
     out[0] = '\0';
 
@@ -26,12 +40,12 @@ static bool query_header(HINTERNET req, const wchar_t *name, char *out, int cap)
         return false;
     }
 
-    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out, cap, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out, cap, nullptr, nullptr);
     out[cap - 1] = '\0';
     return out[0] != '\0';
 }
 
-static bool query_content_type(HINTERNET req, char *out, int cap) {
+bool query_content_type(HINTERNET req, char *out, int cap) {
     if (!out || cap <= 0) return false;
     out[0] = '\0';
 
@@ -41,12 +55,12 @@ static bool query_content_type(HINTERNET req, char *out, int cap) {
         return false;
     }
 
-    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out, cap, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, out, cap, nullptr, nullptr);
     out[cap - 1] = '\0';
     return out[0] != '\0';
 }
 
-static void merge_metadata(SubMetadata& dst, const SubMetadata& src) {
+void merge_metadata(SubMetadata& dst, const SubMetadata& src) {
     if (!dst.userinfo[0] && src.userinfo[0]) copy_limited(dst.userinfo, sizeof(dst.userinfo), src.userinfo);
     if (!dst.interval[0] && src.interval[0]) copy_limited(dst.interval, sizeof(dst.interval), src.interval);
     if (!dst.disposition[0] && src.disposition[0]) copy_limited(dst.disposition, sizeof(dst.disposition), src.disposition);
@@ -58,7 +72,7 @@ static void merge_metadata(SubMetadata& dst, const SubMetadata& src) {
     if (!dst.content_type[0] && src.content_type[0]) copy_limited(dst.content_type, sizeof(dst.content_type), src.content_type);
 }
 
-static std::string header_safe(const char *value) {
+std::string header_safe(const char *value) {
     std::string out;
     if (!value) return out;
     for (const char *p = value; *p; p++) {
@@ -67,36 +81,37 @@ static std::string header_safe(const char *value) {
     return out;
 }
 
-static std::string lower_copy(const std::string& value) {
-    std::string out = value;
-    for (char& c : out) c = (char)tolower((unsigned char)c);
+std::string lower_copy(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char c : value) out.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
     return out;
 }
 
-static bool contains_ci(const std::string& value, const char *needle) {
+bool contains_ci(std::string_view value, std::string_view needle) {
     return lower_copy(value).find(lower_copy(needle)) != std::string::npos;
 }
 
-static std::string request_header(const std::string& req, const char *name) {
+std::string request_header(std::string_view req, std::string_view name) {
     std::string wanted = lower_copy(name);
     size_t start = 0;
     while (start < req.length()) {
         size_t end = req.find('\n', start);
-        if (end == std::string::npos) end = req.length();
-        std::string line = req.substr(start, end - start);
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (end == std::string_view::npos) end = req.length();
+        std::string_view line = req.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
 
         size_t colon = line.find(':');
-        if (colon != std::string::npos && lower_copy(line.substr(0, colon)) == wanted) {
+        if (colon != std::string_view::npos && lower_copy(line.substr(0, colon)) == wanted) {
             size_t value_start = line.find_first_not_of(" \t", colon + 1);
-            return value_start == std::string::npos ? "" : line.substr(value_start);
+            return value_start == std::string_view::npos ? "" : std::string(line.substr(value_start));
         }
         start = end + 1;
     }
     return "";
 }
 
-static std::string target_from_user_agent(const std::string& ua) {
+std::string target_from_user_agent(std::string_view ua) {
     if (contains_ci(ua, "clash")) return "clash";
     if (contains_ci(ua, "sing-box") || contains_ci(ua, "singbox")) return "singbox";
     if (contains_ci(ua, "v2ray") || contains_ci(ua, "xray") ||
@@ -108,18 +123,15 @@ static std::string target_from_user_agent(const std::string& ua) {
     return "";
 }
 
-static void append_header(std::string& headers, const char *name, const char *value) {
+void append_header(std::string& headers, const char *name, const char *value) {
     if (!value || !value[0]) return;
-    headers += name;
-    headers += ": ";
-    headers += header_safe(value);
-    headers += "\r\n";
+    headers += std::format("{}: {}\r\n", name, header_safe(value));
 }
 
-static std::string quoted_filename(const char *name) {
+std::string quoted_filename(const char *name) {
     std::string out;
     for (const char *p = name; p && *p; p++) {
-        unsigned char c = (unsigned char)*p;
+        unsigned char c = static_cast<unsigned char>(*p);
         if (c < 0x20 || c >= 0x7f) continue;
         if (*p == '"' || *p == '\\') out += '_';
         else out += *p;
@@ -127,18 +139,18 @@ static std::string quoted_filename(const char *name) {
     return out.empty() ? "subscription" : out;
 }
 
-static void apply_route_name(SubMetadata& meta, const char *name) {
+void apply_route_name(SubMetadata& meta, const char *name) {
     if (!name || !name[0]) return;
 
-    std::string title = "base64:" + base64_encode(name);
+    std::string title = std::format("base64:{}", base64_encode(name));
     copy_limited(meta.profile_title, sizeof(meta.profile_title), title.c_str());
 
-    std::string disp = "attachment; filename=\"" + quoted_filename(name) +
-                       "\"; filename*=UTF-8''" + url_encode(name);
+    std::string disp = std::format("attachment; filename=\"{}\"; filename*=UTF-8''{}",
+                                   quoted_filename(name), url_encode(name));
     copy_limited(meta.disposition, sizeof(meta.disposition), disp.c_str());
 }
 
-static std::string metadata_headers(const SubMetadata& meta) {
+std::string metadata_headers(const SubMetadata& meta) {
     std::string headers;
     append_header(headers, "Subscription-Userinfo", meta.userinfo);
     append_header(headers, "Profile-Update-Interval", meta.interval);
@@ -151,7 +163,7 @@ static std::string metadata_headers(const SubMetadata& meta) {
     return headers;
 }
 
-static const char *converted_content_type(const std::string& target) {
+const char *converted_content_type(std::string_view target) {
     if (target == "clash") return "text/yaml; charset=utf-8";
     if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
         target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
@@ -160,7 +172,7 @@ static const char *converted_content_type(const std::string& target) {
     return "text/plain; charset=utf-8";
 }
 
-static bool preferred_metadata_source(const std::string& target, const Route& rt, int index, const SubMetadata& meta) {
+bool preferred_metadata_source(std::string_view target, const Route& rt, int index, const SubMetadata& meta) {
     std::string ua = (index >= 0 && index < 8) ? rt.user_agents[index] : "";
     if (target == "clash") {
         return contains_ci(ua, "clash") || contains_ci(meta.content_type, "yaml");
@@ -175,7 +187,7 @@ static bool preferred_metadata_source(const std::string& target, const Route& rt
     return false;
 }
 
-static void merge_metadata_for_target(SubMetadata& dst, const SubMetadata& src, bool preferred, bool& have_preferred) {
+void merge_metadata_for_target(SubMetadata& dst, const SubMetadata& src, bool preferred, bool& have_preferred) {
     if (preferred && !have_preferred) {
         SubMetadata old = dst;
         dst = src;
@@ -188,31 +200,31 @@ static void merge_metadata_for_target(SubMetadata& dst, const SubMetadata& src, 
     }
 }
 
+} // namespace
+
 int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int url_index,
               SubMetadata *out_meta) {
-    HINTERNET hS = NULL, hC = NULL, hR = NULL;
     int total = -1;
-    char full_url[4096];
+    char full_url[4096]{};
     std::wstring object_name;
 
     if (out_meta) memset(out_meta, 0, sizeof(*out_meta));
 
     copy_limited(full_url, sizeof(full_url), rt->urls[url_index]);
 
-    wchar_t wurl[4096];
+    wchar_t wurl[4096]{};
     MultiByteToWideChar(CP_UTF8, 0, full_url, -1, wurl, 4096);
 
-    URL_COMPONENTS uc;
-    memset(&uc, 0, sizeof(uc));
+    URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof(uc);
-    uc.dwHostNameLength = -1;
-    uc.dwUrlPathLength = -1;
-    uc.dwExtraInfoLength = -1;
+    uc.dwHostNameLength = static_cast<DWORD>(-1);
+    uc.dwUrlPathLength = static_cast<DWORD>(-1);
+    uc.dwExtraInfoLength = static_cast<DWORD>(-1);
 
     if (!WinHttpCrackUrl(wurl, 0, 0, &uc)) {
         FILE *f = nullptr;
         if (fopen_s(&f, full_url, "rb") == 0 && f) {
-            int n = (int)fread(buf, 1, cap - 1, f);
+            int n = static_cast<int>(fread(buf, 1, cap - 1, f));
             fclose(f);
             if (n >= 0) {
                 buf[n] = '\0';
@@ -222,24 +234,26 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
         return -1;
     }
 
-    wchar_t host[256] = { 0 };
+    wchar_t host[256]{};
     wcsncpy_s(host, 256, uc.lpszHostName, uc.dwHostNameLength);
 
     const wchar_t* ua = custom_ua;
-    wchar_t wua[128] = {0};
+    wchar_t wua[128]{};
     if (!ua && rt && rt->user_agents[url_index][0]) {
         MultiByteToWideChar(CP_UTF8, 0, rt->user_agents[url_index], -1, wua, 128);
         ua = wua;
     }
     if (!ua) ua = UA_WIDE;
 
-    hS = WinHttpOpen(ua, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hS) goto out;
+    HINTERNET raw_hS = WinHttpOpen(ua, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!raw_hS) return -1;
+    ScopedHInternet hS(raw_hS);
 
-    WinHttpSetTimeouts(hS, UP_TIMEOUT, UP_TIMEOUT, UP_TIMEOUT, UP_TIMEOUT);
+    WinHttpSetTimeouts(hS.get(), UP_TIMEOUT, UP_TIMEOUT, UP_TIMEOUT, UP_TIMEOUT);
 
-    hC = WinHttpConnect(hS, host, uc.nPort, 0);
-    if (!hC) goto out;
+    HINTERNET raw_hC = WinHttpConnect(hS.get(), host, uc.nPort, 0);
+    if (!raw_hC) return -1;
+    ScopedHInternet hC(raw_hC);
 
     if (uc.lpszUrlPath && uc.dwUrlPathLength) {
         object_name.assign(uc.lpszUrlPath, uc.dwUrlPathLength);
@@ -250,12 +264,13 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
         object_name.append(uc.lpszExtraInfo, uc.dwExtraInfoLength);
     }
 
-    hR = WinHttpOpenRequest(hC, L"GET", object_name.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                            (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0);
-    if (!hR) goto out;
+    HINTERNET raw_hR = WinHttpOpenRequest(hC.get(), L"GET", object_name.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                          (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0);
+    if (!raw_hR) return -1;
+    ScopedHInternet hR(raw_hR);
 
     if (rt->use_hwid) {
-        wchar_t hdr[1024], wH[128], wO[64], wV[64], wM[256];
+        wchar_t hdr[1024]{}, wH[128]{}, wO[64]{}, wV[64]{}, wM[256]{};
         MultiByteToWideChar(CP_UTF8, 0, g_Dev.hwid, -1, wH, 128);
         MultiByteToWideChar(CP_UTF8, 0, g_Dev.os, -1, wO, 64);
         MultiByteToWideChar(CP_UTF8, 0, g_Dev.ver, -1, wV, 64);
@@ -266,53 +281,49 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
                    L"x-ver-os: %s\r\n"
                    L"x-device-model: %s",
                    wH, wO, wV, wM);
-        WinHttpAddRequestHeaders(hR, hdr, (DWORD)-1L, WINHTTP_ADDREQ_FLAG_ADD);
+        WinHttpAddRequestHeaders(hR.get(), hdr, static_cast<DWORD>(-1L), WINHTTP_ADDREQ_FLAG_ADD);
     }
 
-    if (!WinHttpSendRequest(hR, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) goto out;
-    if (!WinHttpReceiveResponse(hR, NULL)) goto out;
+    if (!WinHttpSendRequest(hR.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) return -1;
+    if (!WinHttpReceiveResponse(hR.get(), nullptr)) return -1;
 
     {
         DWORD code = 0, sz = sizeof(code);
-        WinHttpQueryHeaders(hR, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WinHttpQueryHeaders(hR.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz, WINHTTP_NO_HEADER_INDEX);
-        if (code != 200) { total = -(int)code; goto out; }
+        if (code != 200) { return -static_cast<int>(code); }
     }
 
     if (out_meta) {
-        query_header(hR, L"Subscription-Userinfo", out_meta->userinfo, sizeof(out_meta->userinfo));
-        query_header(hR, L"Profile-Update-Interval", out_meta->interval, sizeof(out_meta->interval));
-        query_header(hR, L"Content-Disposition", out_meta->disposition, sizeof(out_meta->disposition));
-        query_header(hR, L"Profile-Title", out_meta->profile_title, sizeof(out_meta->profile_title));
-        query_header(hR, L"Announce", out_meta->announce, sizeof(out_meta->announce));
-        query_header(hR, L"Profile-Web-Page-Url", out_meta->profile_web_page_url, sizeof(out_meta->profile_web_page_url));
-        query_header(hR, L"Support-Url", out_meta->support_url, sizeof(out_meta->support_url));
-        query_header(hR, L"Subscription-Refill-Date", out_meta->refill_date, sizeof(out_meta->refill_date));
-        query_content_type(hR, out_meta->content_type, sizeof(out_meta->content_type));
+        query_header(hR.get(), L"Subscription-Userinfo", out_meta->userinfo, sizeof(out_meta->userinfo));
+        query_header(hR.get(), L"Profile-Update-Interval", out_meta->interval, sizeof(out_meta->interval));
+        query_header(hR.get(), L"Content-Disposition", out_meta->disposition, sizeof(out_meta->disposition));
+        query_header(hR.get(), L"Profile-Title", out_meta->profile_title, sizeof(out_meta->profile_title));
+        query_header(hR.get(), L"Announce", out_meta->announce, sizeof(out_meta->announce));
+        query_header(hR.get(), L"Profile-Web-Page-Url", out_meta->profile_web_page_url, sizeof(out_meta->profile_web_page_url));
+        query_header(hR.get(), L"Support-Url", out_meta->support_url, sizeof(out_meta->support_url));
+        query_header(hR.get(), L"Subscription-Refill-Date", out_meta->refill_date, sizeof(out_meta->refill_date));
+        query_content_type(hR.get(), out_meta->content_type, sizeof(out_meta->content_type));
     }
 
     total = 0;
     for (;;) {
         DWORD avail = 0, got = 0;
-        if (!WinHttpQueryDataAvailable(hR, &avail) || !avail) break;
-        if (total + (int)avail >= cap) avail = (DWORD)(cap - 1 - total);
+        if (!WinHttpQueryDataAvailable(hR.get(), &avail) || !avail) break;
+        if (total + static_cast<int>(avail) >= cap) avail = static_cast<DWORD>(cap - 1 - total);
         if (!avail) break;
-        if (!WinHttpReadData(hR, buf + total, avail, &got)) break;
-        total += (int)got;
+        if (!WinHttpReadData(hR.get(), buf + total, avail, &got)) break;
+        total += static_cast<int>(got);
     }
     buf[total] = '\0';
-
-out:
-    if (hR) WinHttpCloseHandle(hR);
-    if (hC) WinHttpCloseHandle(hC);
-    if (hS) WinHttpCloseHandle(hS);
     return total;
 }
+
 static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::string& target, int log_port) {
-    char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
+    char *body = static_cast<char *>(HeapAlloc(GetProcessHeap(), 0, BODY_CAP));
     if (!body) {
-        const char *e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOOM";
-        send(c, e, (int)strlen(e), 0);
+        constexpr std::string_view e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOOM";
+        send(c, e.data(), static_cast<int>(e.length()), 0);
         return;
     }
 
@@ -323,12 +334,12 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
     std::vector<Rule> all_rules;
     int success_count = 0;
 
-    SubMetadata meta = {0};
+    SubMetadata meta{};
     bool have_preferred_meta = false;
 
     for (int i = 0; i < source_rt->url_count; i++) {
-        SubMetadata temp_meta = {0};
-        int blen = fetch_url(source_rt, body, BODY_CAP, NULL, i, &temp_meta);
+        SubMetadata temp_meta{};
+        int blen = fetch_url(source_rt, body, static_cast<int>(BODY_CAP), nullptr, i, &temp_meta);
         if (blen >= 0) {
             success_count++;
             if (!target.empty()) {
@@ -337,33 +348,33 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
                 merge_metadata(meta, temp_meta);
             }
 
-            std::string payload(body, blen);
+            std::string_view payload(body, blen);
 
-            if (target == "clash" && payload.find("proxies:") != std::string::npos) {
+            if (target == "clash" && payload.contains("proxies:")) {
                 // Extract Native Clash YAML proxies
                 size_t p_start = payload.find("proxies:");
-                if (p_start != std::string::npos) {
+                if (p_start != std::string_view::npos) {
                     p_start += 8;
                     if (p_start < payload.length() && payload[p_start] == '\r') p_start++;
                     if (p_start < payload.length() && payload[p_start] == '\n') p_start++;
 
-                    size_t next_section = std::string::npos;
+                    size_t next_section = std::string_view::npos;
                     size_t search_pos = p_start;
-                    while ((search_pos = payload.find('\n', search_pos)) != std::string::npos) {
+                    while ((search_pos = payload.find('\n', search_pos)) != std::string_view::npos) {
                         search_pos++;
-                        if (search_pos < payload.length() && isalpha((unsigned char)payload[search_pos])) {
+                        if (search_pos < payload.length() && isalpha(static_cast<unsigned char>(payload[search_pos]))) {
                             next_section = search_pos;
                             break;
                         }
                     }
-                    size_t p_end = (next_section != std::string::npos) ? next_section : payload.length();
-                    std::string block = payload.substr(p_start, p_end - p_start);
+                    size_t p_end = (next_section != std::string_view::npos) ? next_section : payload.length();
+                    std::string_view block = payload.substr(p_start, p_end - p_start);
 
                     std::string filtered_block;
                     size_t search_start = 0;
                     while (true) {
                         size_t name_pos = block.find("- name:", search_start);
-                        if (name_pos == std::string::npos) break;
+                        if (name_pos == std::string_view::npos) break;
 
                         size_t node_start = name_pos;
                         while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
@@ -372,32 +383,32 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
 
                         size_t next_name_pos = block.find("- name:", name_pos + 7);
                         size_t next_node_start = block.length();
-                        if (next_name_pos != std::string::npos) {
+                        if (next_name_pos != std::string_view::npos) {
                             next_node_start = next_name_pos;
                             while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
                                 next_node_start--;
                             }
                         }
 
-                        std::string node_str = block.substr(node_start, next_node_start - node_start);
-                        filtered_block += node_str;
+                        std::string_view node_str = block.substr(node_start, next_node_start - node_start);
+                        filtered_block.append(node_str);
 
                         size_t n_pos = node_str.find("- name:");
                         size_t end_line = node_str.find('\n', n_pos);
-                        if (end_line == std::string::npos) end_line = node_str.length();
+                        if (end_line == std::string_view::npos) end_line = node_str.length();
                         size_t val_start = node_str.find_first_not_of(" \t", n_pos + 7);
-                        if (val_start != std::string::npos && val_start < end_line) {
+                        if (val_start != std::string_view::npos && val_start < end_line) {
                             size_t val_end = end_line - 1;
                             while (val_end >= val_start && (node_str[val_end] == ' ' || node_str[val_end] == '\t' || node_str[val_end] == '\r' || node_str[val_end] == '\n')) {
                                 val_end--;
                             }
                             if (val_start <= val_end) {
-                                std::string raw_name = node_str.substr(val_start, val_end - val_start + 1);
+                                std::string_view raw_name = node_str.substr(val_start, val_end - val_start + 1);
                                 if (raw_name.length() >= 2 && ((raw_name.front() == '"' && raw_name.back() == '"') ||
                                     (raw_name.front() == '\'' && raw_name.back() == '\''))) {
                                     raw_name = raw_name.substr(1, raw_name.length() - 2);
                                 }
-                                raw_clash_names += "      - \"" + raw_name + "\"\n";
+                                raw_clash_names += std::format("      - \"{}\"\n", raw_name);
                             }
                         }
 
@@ -406,14 +417,20 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
                     raw_clash_proxies += filtered_block;
                 }
             } else if (!target.empty()) {
-                std::string decoded;
+                std::string_view decoded;
                 size_t first_char = payload.find_first_not_of(" \t\r\n");
-                if (first_char != std::string::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
+                std::string decoded_buf;
+                if (first_char != std::string_view::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
                     decoded = payload;
-                } else if (payload.find("proxies:") != std::string::npos) {
+                } else if (payload.contains("proxies:")) {
                     decoded = payload;
                 } else {
-                    decoded = (payload.find("://") != std::string::npos) ? payload : base64_decode(payload);
+                    if (payload.contains("://")) {
+                        decoded = payload;
+                    } else {
+                        decoded_buf = base64_decode(payload);
+                        decoded = decoded_buf;
+                    }
                 }
                 auto p = parse_proxies(decoded);
                 all_proxies.insert(all_proxies.end(), p.begin(), p.end());
@@ -431,7 +448,7 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
         if (target == "clash") {
             out_payload = gen_clash(all_proxies, all_rules);
             if (!raw_clash_proxies.empty()) {
-                while (!raw_clash_proxies.empty() && isspace((unsigned char)raw_clash_proxies.back())) {
+                while (!raw_clash_proxies.empty() && isspace(static_cast<unsigned char>(raw_clash_proxies.back()))) {
                     raw_clash_proxies.pop_back();
                 }
                 raw_clash_proxies += "\n";
@@ -471,45 +488,46 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
         apply_route_name(meta, source_rt->name);
         std::string extra_hdrs = metadata_headers(meta);
 
-        std::string hdr = "HTTP/1.1 200 OK\r\n"
-                          "Content-Type: " + content_type + "\r\n"
-                          "Content-Length: " + std::to_string(out_payload.length()) + "\r\n"
-                          + extra_hdrs +
-                          "Connection: close\r\n\r\n";
-        send(c, hdr.c_str(), (int)hdr.length(), 0);
-        send(c, out_payload.c_str(), (int)out_payload.length(), 0);
+        std::string hdr = std::format("HTTP/1.1 200 OK\r\n"
+                                      "Content-Type: {}\r\n"
+                                      "Content-Length: {}\r\n"
+                                      "{}"
+                                      "Connection: close\r\n\r\n",
+                                      content_type, out_payload.length(), extra_hdrs);
+        send(c, hdr.c_str(), static_cast<int>(hdr.length()), 0);
+        send(c, out_payload.c_str(), static_cast<int>(out_payload.length()), 0);
         if (!target.empty()) {
             logm("  [OK] Port %d (target=%s) -> 200 OK (%zu bytes)\n\n", log_port, target.c_str(), out_payload.length());
         } else {
             logm("  [OK] Port %d -> 200 OK (%zu bytes)\n\n", log_port, out_payload.length());
         }
     } else {
-        std::string e = "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: 15\r\nConnection: close\r\n\r\nupstream failed";
-        send(c, e.c_str(), (int)e.length(), 0);
+        constexpr std::string_view e = "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: 15\r\nConnection: close\r\n\r\nupstream failed";
+        send(c, e.data(), static_cast<int>(e.length()), 0);
         logm("  [FAIL] Port %d -> 502 Upstream Failed\n\n", log_port);
     }
     HeapFree(GetProcessHeap(), 0, body);
 }
 
-void handle_subconverter(SOCKET c, const std::string& req) {
+void handle_subconverter(SOCKET c, std::string_view req) {
     size_t q_pos = req.find('?');
     size_t space_pos = req.find(' ', q_pos);
-    if (q_pos == std::string::npos || space_pos == std::string::npos) {
-        const char *r = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-        send(c, r, (int)strlen(r), 0);
+    if (q_pos == std::string_view::npos || space_pos == std::string_view::npos) {
+        constexpr std::string_view r = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+        send(c, r.data(), static_cast<int>(r.length()), 0);
         return;
     }
 
-    std::string qs = req.substr(q_pos + 1, space_pos - (q_pos + 1));
+    std::string_view qs = req.substr(q_pos + 1, space_pos - (q_pos + 1));
     std::string target, url;
     size_t start = 0;
     while (start < qs.length()) {
         size_t amp = qs.find('&', start);
-        if (amp == std::string::npos) amp = qs.length();
-        std::string kv = qs.substr(start, amp - start);
+        if (amp == std::string_view::npos) amp = qs.length();
+        std::string_view kv = qs.substr(start, amp - start);
         size_t eq = kv.find('=');
-        if (eq != std::string::npos) {
-            std::string k = kv.substr(0, eq);
+        if (eq != std::string_view::npos) {
+            std::string_view k = kv.substr(0, eq);
             std::string v = url_decode(kv.substr(eq + 1));
             if (k == "target") target = v;
             else if (k == "url") url = v;
@@ -518,14 +536,14 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     }
 
     if (url.empty()) {
-        const char *r = "HTTP/1.1 400 Missing URL\r\nConnection: close\r\n\r\n";
-        send(c, r, (int)strlen(r), 0);
+        constexpr std::string_view r = "HTTP/1.1 400 Missing URL\r\nConnection: close\r\n\r\n";
+        send(c, r.data(), static_cast<int>(r.length()), 0);
         return;
     }
 
-    Route temp_rt = { 0 };
+    Route temp_rt{};
     int internal_port = 0;
-    if (url.find("http://127.0.0.1:") == 0) {
+    if (url.starts_with("http://127.0.0.1:")) {
         internal_port = atoi(url.c_str() + 17);
     }
 
@@ -548,26 +566,27 @@ void handle_subconverter(SOCKET c, const std::string& req) {
 
 void handle_client(SOCKET c, const Route *rt) {
     DWORD tv = CL_TIMEOUT;
-    setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
-    setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&tv), sizeof(tv));
+    setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&tv), sizeof(tv));
 
-    char req[2048];
+    char req[2048]{};
     int n = recv(c, req, sizeof(req) - 1, 0);
     if (n <= 0) {
         closesocket(c);
         return;
     }
     req[n] = '\0';
+    std::string_view req_view(req, n);
 
-    if (strncmp(req, "GET ", 4) != 0) {
-        const char *r = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        send(c, r, (int)strlen(r), 0);
+    if (!req_view.starts_with("GET ")) {
+        constexpr std::string_view r = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        send(c, r.data(), static_cast<int>(r.length()), 0);
         closesocket(c);
         return;
     }
 
     if (rt->is_subconverter) {
-        handle_subconverter(c, req);
+        handle_subconverter(c, req_view);
         shutdown(c, SD_SEND);
         closesocket(c);
         return;
@@ -585,7 +604,7 @@ void handle_client(SOCKET c, const Route *rt) {
         }
         serve_converted_or_raw(c, source_rt, rt->target, rt->local_port);
     } else {
-        std::string auto_target = target_from_user_agent(request_header(req, "User-Agent"));
+        std::string auto_target = target_from_user_agent(request_header(req_view, "User-Agent"));
         if (!auto_target.empty()) {
             logm("  [AUTO] Port %d UA target=%s\n", rt->local_port, auto_target.c_str());
         }
@@ -595,27 +614,28 @@ void handle_client(SOCKET c, const Route *rt) {
     shutdown(c, SD_SEND);
     closesocket(c);
 }
+
 SOCKET make_listener(int port) {
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return s;
 
     int on = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on));
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&on), sizeof(on));
 
-    struct sockaddr_in a;
-    memset(&a, 0, sizeof(a));
+    struct sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_ANY);
-    a.sin_port = htons(port);
+    a.sin_port = htons(static_cast<u_short>(port));
 
-    if (bind(s, (struct sockaddr *)&a, sizeof(a)) == SOCKET_ERROR || listen(s, 4) == SOCKET_ERROR) {
+    if (bind(s, reinterpret_cast<struct sockaddr *>(&a), sizeof(a)) == SOCKET_ERROR || listen(s, 4) == SOCKET_ERROR) {
         closesocket(s);
         return INVALID_SOCKET;
     }
     return s;
 }
-void server_loop(void) {
-    WSADATA wsa;
+
+void server_loop() {
+    WSADATA wsa{};
     WSAStartup(MAKEWORD(2, 2), &wsa);
 
     int active_sockets = 0;
@@ -653,13 +673,13 @@ void server_loop(void) {
         }
 
         struct timeval tv = { 1, 0 };
-        int r = select((int)max_sd + 1, &rfds, NULL, NULL, &tv);
+        int r = select(static_cast<int>(max_sd + 1), &rfds, nullptr, nullptr, &tv);
 
         if (r > 0) {
             for (int i = 0; i < g_RouteCount; i++) {
                 SOCKET s = g_Routes[i].listen_sock;
                 if (s != INVALID_SOCKET && FD_ISSET(s, &rfds)) {
-                    SOCKET c = accept(s, NULL, NULL);
+                    SOCKET c = accept(s, nullptr, nullptr);
                     if (c != INVALID_SOCKET) {
                         std::thread([c, i]() {
                             handle_client(c, &g_Routes[i]);

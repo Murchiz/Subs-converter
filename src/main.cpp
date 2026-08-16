@@ -3,64 +3,106 @@
 #include "parser.h"
 #include "generator.h"
 #include "utils.h"
+#include "safe_crt.h"
 #include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <format>
+#include <print>
+#include <string_view>
+#include <algorithm>
+
+namespace fs = std::filesystem;
+
+namespace {
+
+inline std::string_view trim_sv(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool iequals(std::string_view a, std::string_view b) noexcept {
+    return std::ranges::equal(a, b, [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+    });
+}
+
+inline bool istarts_with(std::string_view str, std::string_view prefix) noexcept {
+    if (str.length() < prefix.length()) return false;
+    return iequals(str.substr(0, prefix.length()), prefix);
+}
+
+} // namespace
+
 int reg_sz(HKEY root, const char *sub, const char *name, char *buf, DWORD cap) {
-    HKEY hk;
+    HKEY hk = nullptr;
     DWORD type = 0, sz = cap;
-    if (RegOpenKeyExA(root, sub, 0, KEY_READ, &hk)) return 0;
-    int ok = !RegQueryValueExA(hk, name, NULL, &type, (BYTE *)buf, &sz) && type == REG_SZ;
+    if (RegOpenKeyExA(root, sub, 0, KEY_READ, &hk) != ERROR_SUCCESS) return 0;
+    int ok = (!RegQueryValueExA(hk, name, nullptr, &type, reinterpret_cast<BYTE *>(buf), &sz) && type == REG_SZ) ? 1 : 0;
     RegCloseKey(hk);
     return ok;
 }
+
 void dev_gather() {
     memset(&g_Dev, 0, sizeof(g_Dev));
-    copy_limited(g_Dev.os, sizeof(g_Dev.os), "Windows");
+    safe_strncpy(g_Dev.os, "Windows");
 
     if (!reg_sz(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", "MachineGuid", g_Dev.hwid, sizeof(g_Dev.hwid)))
-        copy_limited(g_Dev.hwid, sizeof(g_Dev.hwid), "unknown");
+        safe_strncpy(g_Dev.hwid, "unknown");
 
     typedef LONG(WINAPI *RGV)(OSVERSIONINFOW *);
-    OSVERSIONINFOW v;
-    memset(&v, 0, sizeof(v));
+    OSVERSIONINFOW v{};
     v.dwOSVersionInfoSize = sizeof(v);
-    RGV fn = (RGV)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion");
-    if (fn && fn(&v) == 0)
-        snprintf(g_Dev.ver, sizeof(g_Dev.ver), "%lu.%lu.%lu", v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber);
-    else
-        copy_limited(g_Dev.ver, sizeof(g_Dev.ver), "10.0");
+    auto fn = reinterpret_cast<RGV>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+    if (fn && fn(&v) == 0) {
+        std::string ver = std::format("{}.{}.{}", v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber);
+        safe_strncpy(g_Dev.ver, ver.c_str());
+    } else {
+        safe_strncpy(g_Dev.ver, "10.0");
+    }
 
-    char mfr[128] = { 0 }, prod[128] = { 0 };
+    char mfr[128]{}, prod[128]{};
     reg_sz(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SystemInformation", "SystemManufacturer", mfr, sizeof(mfr));
     reg_sz(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SystemInformation", "SystemProductName", prod, sizeof(prod));
 
-    if (mfr[0] && prod[0]) snprintf(g_Dev.model, sizeof(g_Dev.model), "%s %s", mfr, prod);
-    else if (prod[0]) copy_limited(g_Dev.model, sizeof(g_Dev.model), prod);
-    else copy_limited(g_Dev.model, sizeof(g_Dev.model), "Windows PC");
+    if (mfr[0] && prod[0]) {
+        std::string model = std::format("{} {}", mfr, prod);
+        safe_strncpy(g_Dev.model, model.c_str());
+    } else if (prod[0]) {
+        safe_strncpy(g_Dev.model, prod);
+    } else {
+        safe_strncpy(g_Dev.model, "Windows PC");
+    }
 }
+
 void load_config() {
-    char cfg_path[MAX_PATH];
-    snprintf(cfg_path, sizeof(cfg_path), "%s\\config.ini", g_ExeDir);
+    fs::path cfg_path = fs::path(g_ExeDir) / "config.ini";
 
     Route *subc = &g_Routes[g_RouteCount++];
     subc->local_port = 25500;
     subc->is_subconverter = 1;
     subc->is_convert = 0;
 
-    FILE *f = nullptr;
-    errno_t err = fopen_s(&f, cfg_path, "r");
-    if (err != 0 || !f) {
-        logm("Warning: Cannot open %s\n", cfg_path);
+    std::ifstream f(cfg_path);
+    if (!f.is_open()) {
+        logm("Warning: Cannot open %s\n", cfg_path.string().c_str());
         return;
     }
 
-    char line[1024];
+    std::string raw_line;
     int in_sub = 0, in_dev = 0;
-    char links[8][2048] = { 0 };
-    char uas[8][128] = { 0 };
-    char sub_name[128] = { 0 };
+    char links[8][2048]{};
+    char uas[8][128]{};
+    char sub_name[128]{};
     int link_count = 0;
     int port = 0, hwid = 0;
-    char converts[1024] = { 0 };
+    char converts[1024]{};
 
     auto commit_sub = [&]() {
         if (in_sub && port > 0 && link_count > 0) {
@@ -70,17 +112,17 @@ void load_config() {
             r->is_convert = 0;
             r->is_subconverter = 0;
             r->url_count = link_count;
-            copy_limited(r->name, sizeof(r->name), sub_name);
+            safe_strncpy(r->name, sub_name);
             for (int i = 0; i < link_count; i++) {
-                copy_limited(r->urls[i], sizeof(r->urls[i]), links[i]);
-                copy_limited(r->user_agents[i], sizeof(r->user_agents[i]), uas[i]);
+                safe_strncpy(r->urls[i], links[i]);
+                safe_strncpy(r->user_agents[i], uas[i]);
             }
             r->use_hwid = hwid;
 
             if (converts[0]) {
                 int c_idx = 1;
                 char *context = nullptr;
-                char *tok = strtok_s(converts, ", 	", &context);
+                char *tok = strtok_s(converts, ", \t", &context);
                 while (tok) {
                     if (g_RouteCount >= 64) break;
                     Route *rc = &g_Routes[g_RouteCount++];
@@ -89,66 +131,63 @@ void load_config() {
                     rc->is_subconverter = 0;
                     rc->base_port = port;
                     rc->url_count = 1;
-                    copy_limited(rc->target, sizeof(rc->target), tok);
-                    copy_limited(rc->name, sizeof(rc->name), r->name);
-                    // Conversion routes do not need user agents, they fetch from local 25500
+                    safe_strncpy(rc->target, tok);
+                    safe_strncpy(rc->name, r->name);
                     rc->use_hwid = 0;
                     c_idx++;
-                    tok = strtok_s(nullptr, ", 	", &context);
+                    tok = strtok_s(nullptr, ", \t", &context);
                 }
             }
         }
-        for(int i=0; i<8; i++) { links[i][0] = 0; uas[i][0] = 0; }
+        for (int i = 0; i < 8; i++) { links[i][0] = 0; uas[i][0] = 0; }
         sub_name[0] = 0;
         link_count = 0; port = 0; hwid = 0; converts[0] = 0;
     };
 
-    while (fgets(line, sizeof(line), f)) {
-        char *p = line;
-        while (*p == ' ' || *p == '\t') p++;
-        char *end = p + strlen(p) - 1;
-        while (end >= p && (*end == '\n' || *end == '\r' || *end == ' ' || *end == '\t')) *end-- = '\0';
-        if (!*p || *p == ';' || *p == '#') continue;
+    while (std::getline(f, raw_line)) {
+        std::string_view line = trim_sv(raw_line);
+        if (line.empty() || line.front() == ';' || line.front() == '#') continue;
 
-        if (*p == '[') {
+        if (line.front() == '[') {
             commit_sub();
-            if (_strnicmp(p, "[Sub_", 5) == 0) { in_sub = 1; in_dev = 0; }
-            else if (_stricmp(p, "[Device]") == 0) { in_sub = 0; in_dev = 1; }
+            if (istarts_with(line, "[Sub_")) { in_sub = 1; in_dev = 0; }
+            else if (iequals(line, "[Device]")) { in_sub = 0; in_dev = 1; }
             else { in_sub = 0; in_dev = 0; }
             continue;
         }
 
-        char *eq = strchr(p, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        char *k = p; char *v = eq + 1;
-        char *kend = k + strlen(k) - 1;
-        while (kend >= k && (*kend == ' ' || *kend == '\t')) *kend-- = '\0';
-        while (*v == ' ' || *v == '\t') v++;
+        size_t eq_pos = line.find('=');
+        if (eq_pos == std::string_view::npos) continue;
+        std::string_view k = trim_sv(line.substr(0, eq_pos));
+        std::string_view v = trim_sv(line.substr(eq_pos + 1));
+        std::string v_str(v);
 
         if (in_sub) {
-            if (_strnicmp(k, "link", 4) == 0 && link_count < 8) {
-                int idx = (strlen(k) > 4) ? atoi(k + 4) - 1 : link_count;
-                if (idx >= 0 && idx < 8) { copy_limited(links[idx], sizeof(links[idx]), v); if (idx >= link_count) link_count = idx + 1; }
+            if (istarts_with(k, "link") && link_count < 8) {
+                int idx = (k.length() > 4) ? atoi(std::string(k.substr(4)).c_str()) - 1 : link_count;
+                if (idx >= 0 && idx < 8) {
+                    safe_strncpy(links[idx], v_str.c_str());
+                    if (idx >= link_count) link_count = idx + 1;
+                }
             }
-            else if (_strnicmp(k, "user_agent", 10) == 0) {
-                int idx = (strlen(k) > 10) ? atoi(k + 10) - 1 : 0;
-                if (idx >= 0 && idx < 8) copy_limited(uas[idx], sizeof(uas[idx]), v);
+            else if (istarts_with(k, "user_agent")) {
+                int idx = (k.length() > 10) ? atoi(std::string(k.substr(10)).c_str()) - 1 : 0;
+                if (idx >= 0 && idx < 8) safe_strncpy(uas[idx], v_str.c_str());
             }
-            else if (_stricmp(k, "name") == 0) copy_limited(sub_name, sizeof(sub_name), v);
-            else if (_stricmp(k, "port") == 0) port = atoi(v);
-            else if (_stricmp(k, "hwid") == 0) hwid = (_stricmp(v, "true") == 0 || _stricmp(v, "1") == 0);
-            else if (_stricmp(k, "converts") == 0) copy_limited(converts, sizeof(converts), v);
+            else if (iequals(k, "name")) safe_strncpy(sub_name, v_str.c_str());
+            else if (iequals(k, "port")) port = atoi(v_str.c_str());
+            else if (iequals(k, "hwid")) hwid = (iequals(v, "true") || iequals(v, "1"));
+            else if (iequals(k, "converts")) safe_strncpy(converts, v_str.c_str());
         } else if (in_dev) {
-            if (_stricmp(k, "hwid") == 0) copy_limited(g_Dev.hwid, sizeof(g_Dev.hwid), v);
-            else if (_stricmp(k, "os") == 0) copy_limited(g_Dev.os, sizeof(g_Dev.os), v);
-            else if (_stricmp(k, "ver") == 0) copy_limited(g_Dev.ver, sizeof(g_Dev.ver), v);
-            else if (_stricmp(k, "model") == 0) copy_limited(g_Dev.model, sizeof(g_Dev.model), v);
+            if (iequals(k, "hwid")) safe_strncpy(g_Dev.hwid, v_str.c_str());
+            else if (iequals(k, "os")) safe_strncpy(g_Dev.os, v_str.c_str());
+            else if (iequals(k, "ver")) safe_strncpy(g_Dev.ver, v_str.c_str());
+            else if (iequals(k, "model")) safe_strncpy(g_Dev.model, v_str.c_str());
         }
     }
     commit_sub();
-    fclose(f);
 }
+
 void svc_report(DWORD st, DWORD err, DWORD hint) {
     static DWORD ck = 1;
     g_Svc.dwCurrentState = st;
@@ -173,56 +212,61 @@ VOID WINAPI svc_main(DWORD argc, LPSTR *argv) {
     g_Svc.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
     g_Svc.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
 
-    g_Stop = CreateEvent(NULL, TRUE, FALSE, NULL);
+    g_Stop = CreateEvent(nullptr, TRUE, FALSE, nullptr);
     svc_report(SERVICE_RUNNING, 0, 0);
     server_loop();
     svc_report(SERVICE_STOPPED, 0, 0);
 }
-void do_install(void) {
-    char path[MAX_PATH];
-    GetModuleFileNameA(NULL, path, MAX_PATH);
 
-    SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
-    if (!scm) { puts("ERROR: run as Administrator."); return; }
+void do_install() {
+    char path[MAX_PATH];
+    GetModuleFileNameA(nullptr, path, MAX_PATH);
+
+    SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
+    if (!scm) { std::println("ERROR: run as Administrator."); return; }
 
     SC_HANDLE s = CreateServiceA(scm, SVC_NAME, SVC_DISPLAY, SERVICE_ALL_ACCESS,
         SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
-        path, NULL, NULL, NULL, NULL, NULL);
+        path, nullptr, nullptr, nullptr, nullptr, nullptr);
 
     if (s) {
-        SERVICE_DESCRIPTIONA desc = { (char *)"Local Subscription Bridge & Subconverter" };
+        SERVICE_DESCRIPTIONA desc = { const_cast<char *>("Local Subscription Bridge & Subconverter") };
         ChangeServiceConfig2A(s, SERVICE_CONFIG_DESCRIPTION, &desc);
-        printf("Installed. Starting... ");
-        if (StartServiceA(s, 0, NULL)) puts("OK.");
-        else printf("err %lu (start manually: sc start %s)\n", GetLastError(), SVC_NAME);
+        std::print("Installed. Starting... ");
+        if (StartServiceA(s, 0, nullptr)) {
+            std::println("OK.");
+        } else {
+            std::println("err {} (start manually: sc start {})", GetLastError(), SVC_NAME);
+        }
         CloseServiceHandle(s);
     } else {
         DWORD e = GetLastError();
-        if (e == ERROR_SERVICE_EXISTS) puts("Already installed.");
-        else printf("CreateService error %lu\n", e);
+        if (e == ERROR_SERVICE_EXISTS) std::println("Already installed.");
+        else std::println("CreateService error {}", e);
     }
     CloseServiceHandle(scm);
 }
 
-void do_uninstall(void) {
-    SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
-    if (!scm) { puts("ERROR: run as Administrator."); return; }
+void do_uninstall() {
+    SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) { std::println("ERROR: run as Administrator."); return; }
 
     SC_HANDLE s = OpenServiceA(scm, SVC_NAME, SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
     if (s) {
-        SERVICE_STATUS ss;
+        SERVICE_STATUS ss{};
         ControlService(s, SERVICE_CONTROL_STOP, &ss);
         for (int i = 0; i < 30; i++) {
             if (!QueryServiceStatus(s, &ss) || ss.dwCurrentState == SERVICE_STOPPED) break;
             Sleep(200);
         }
-        puts(DeleteService(s) ? "Uninstalled." : "Delete failed.");
+        std::println("{}", DeleteService(s) ? "Uninstalled." : "Delete failed.");
         CloseServiceHandle(s);
     } else {
-        puts("Service not found.");
+        std::println("Service not found.");
     }
     CloseServiceHandle(scm);
 }
+
 BOOL WINAPI con_ctrl(DWORD c) {
     if (c == CTRL_C_EVENT || c == CTRL_BREAK_EVENT) {
         SetEvent(g_Stop);
@@ -231,34 +275,35 @@ BOOL WINAPI con_ctrl(DWORD c) {
     return FALSE;
 }
 
-void run_console(void) {
+void run_console() {
     g_IsCon = 1;
-    g_Stop = CreateEvent(NULL, TRUE, FALSE, NULL);
+    g_Stop = CreateEvent(nullptr, TRUE, FALSE, nullptr);
     SetConsoleCtrlHandler(con_ctrl, TRUE);
 
-    printf("\n  SubBridge & Subconverter - console mode\n");
-    printf("  HWID:   %s\n", g_Dev.hwid);
-    printf("  OS:     %s %s\n", g_Dev.os, g_Dev.ver);
-    printf("  Model:  %s\n\n", g_Dev.model);
+    std::println("\n  SubBridge & Subconverter - console mode");
+    std::println("  HWID:   {}", g_Dev.hwid);
+    std::println("  OS:     {} {}", g_Dev.os, g_Dev.ver);
+    std::println("  Model:  {}\n", g_Dev.model);
 
     server_loop();
-    puts("\nStopped.");
+    std::println("\nStopped.");
 }
+
 void run_convert(int argc, char **argv) {
     if (argc < 4) {
-        printf("Usage: sub_bridge -convert <target> <url> [output_file]\n");
-        printf("Targets: clash, singbox, singbox-pc, xray, xray-one\n");
+        std::println("Usage: sub_bridge -convert <target> <url> [output_file]");
+        std::println("Targets: clash, singbox, singbox-pc, xray, xray-one");
         return;
     }
     std::string target = argv[2];
     std::string url = argv[3];
     std::string outfile = (argc >= 5) ? argv[4] : "output.txt";
 
-    Route temp_rt = { 0 };
+    Route temp_rt{};
     copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
     temp_rt.url_count = 1;
 
-    char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
+    char *body = static_cast<char *>(HeapAlloc(GetProcessHeap(), 0, BODY_CAP));
 
     std::string out_payload;
     std::string raw_clash_proxies;
@@ -268,36 +313,36 @@ void run_convert(int argc, char **argv) {
     int success_count = 0;
 
     for (int i = 0; i < temp_rt.url_count; i++) {
-        int blen = fetch_url(&temp_rt, body, BODY_CAP, NULL, i);
+        int blen = fetch_url(&temp_rt, body, static_cast<int>(BODY_CAP), nullptr, i);
         if (blen >= 0) {
             success_count++;
-            std::string payload(body, blen);
-            if (target == "clash" && payload.find("proxies:") != std::string::npos) {
+            std::string_view payload(body, blen);
+            if (target == "clash" && payload.contains("proxies:")) {
                 // Extract Native Clash YAML proxies
                 size_t p_start = payload.find("proxies:");
-                if (p_start != std::string::npos) {
+                if (p_start != std::string_view::npos) {
                     p_start += 8; // skip 'proxies:'
                     if (p_start < payload.length() && payload[p_start] == '\r') p_start++;
                     if (p_start < payload.length() && payload[p_start] == '\n') p_start++;
                     
-                    size_t next_section = std::string::npos;
+                    size_t next_section = std::string_view::npos;
                     size_t search_pos = p_start;
-                    while ((search_pos = payload.find('\n', search_pos)) != std::string::npos) {
+                    while ((search_pos = payload.find('\n', search_pos)) != std::string_view::npos) {
                         search_pos++;
-                        if (search_pos < payload.length() && isalpha((unsigned char)payload[search_pos])) {
+                        if (search_pos < payload.length() && isalpha(static_cast<unsigned char>(payload[search_pos]))) {
                             next_section = search_pos;
                             break;
                         }
                     }
-                    size_t p_end = (next_section != std::string::npos) ? next_section : payload.length();
+                    size_t p_end = (next_section != std::string_view::npos) ? next_section : payload.length();
                     
-                    std::string block = payload.substr(p_start, p_end - p_start);
+                    std::string_view block = payload.substr(p_start, p_end - p_start);
                     
                     std::string filtered_block;
                     size_t search_start = 0;
                     while (true) {
                         size_t name_pos = block.find("- name:", search_start);
-                        if (name_pos == std::string::npos) break;
+                        if (name_pos == std::string_view::npos) break;
                         
                         size_t node_start = name_pos;
                         while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
@@ -306,33 +351,32 @@ void run_convert(int argc, char **argv) {
                         
                         size_t next_name_pos = block.find("- name:", name_pos + 7);
                         size_t next_node_start = block.length();
-                        if (next_name_pos != std::string::npos) {
+                        if (next_name_pos != std::string_view::npos) {
                             next_node_start = next_name_pos;
                             while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
                                 next_node_start--;
                             }
                         }
                         
-                        std::string node_str = block.substr(node_start, next_node_start - node_start);
-                        
-                        filtered_block += node_str;
+                        std::string_view node_str = block.substr(node_start, next_node_start - node_start);
+                        filtered_block.append(node_str);
                         
                         size_t n_pos = node_str.find("- name:");
                         size_t end_line = node_str.find('\n', n_pos);
-                        if (end_line == std::string::npos) end_line = node_str.length();
+                        if (end_line == std::string_view::npos) end_line = node_str.length();
                         size_t val_start = node_str.find_first_not_of(" \t", n_pos + 7);
-                        if (val_start != std::string::npos && val_start < end_line) {
+                        if (val_start != std::string_view::npos && val_start < end_line) {
                             size_t val_end = end_line - 1;
                             while (val_end >= val_start && (node_str[val_end] == ' ' || node_str[val_end] == '\t' || node_str[val_end] == '\r' || node_str[val_end] == '\n')) {
                                 val_end--;
                             }
                             if (val_start <= val_end) {
-                                std::string raw_name = node_str.substr(val_start, val_end - val_start + 1);
+                                std::string_view raw_name = node_str.substr(val_start, val_end - val_start + 1);
                                 if (raw_name.length() >= 2 && ((raw_name.front() == '"' && raw_name.back() == '"') ||
                                     (raw_name.front() == '\'' && raw_name.back() == '\''))) {
                                     raw_name = raw_name.substr(1, raw_name.length() - 2);
                                 }
-                                raw_clash_names += "      - \"" + raw_name + "\"\n";
+                                raw_clash_names += std::format("      - \"{}\"\n", raw_name);
                             }
                         }
                         
@@ -341,14 +385,20 @@ void run_convert(int argc, char **argv) {
                     raw_clash_proxies += filtered_block;
                 }
             } else {
-                std::string decoded;
+                std::string_view decoded;
                 size_t first_char = payload.find_first_not_of(" \t\r\n");
-                if (first_char != std::string::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
+                std::string decoded_buf;
+                if (first_char != std::string_view::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
                     decoded = payload;
-                } else if (payload.find("proxies:") != std::string::npos) {
+                } else if (payload.contains("proxies:")) {
                     decoded = payload;
                 } else {
-                    decoded = (payload.find("://") != std::string::npos) ? payload : base64_decode(payload);
+                    if (payload.contains("://")) {
+                        decoded = payload;
+                    } else {
+                        decoded_buf = base64_decode(payload);
+                        decoded = decoded_buf;
+                    }
                 }
                 auto p = parse_proxies(decoded);
                 all_proxies.insert(all_proxies.end(), p.begin(), p.end());
@@ -362,7 +412,7 @@ void run_convert(int argc, char **argv) {
         if (target == "clash") {
             out_payload = gen_clash(all_proxies, all_rules);
             if (!raw_clash_proxies.empty()) {
-                while (!raw_clash_proxies.empty() && isspace((unsigned char)raw_clash_proxies.back())) {
+                while (!raw_clash_proxies.empty() && isspace(static_cast<unsigned char>(raw_clash_proxies.back()))) {
                     raw_clash_proxies.pop_back();
                 }
                 raw_clash_proxies += "\n";
@@ -392,22 +442,21 @@ void run_convert(int argc, char **argv) {
             out_payload = gen_v2ray(all_proxies);
         }
         
-        FILE *f = nullptr;
-        errno_t err = fopen_s(&f, outfile.c_str(), "wb");
-        if (err == 0 && f) {
-            fwrite(out_payload.c_str(), 1, out_payload.length(), f);
-            fclose(f);
-            printf("Successfully converted to %s\n", outfile.c_str());
+        std::ofstream out_file(outfile, std::ios::binary);
+        if (out_file.is_open()) {
+            out_file.write(out_payload.data(), out_payload.length());
+            std::println("Successfully converted to {}", outfile);
         } else {
-            printf("Error writing to %s\n", outfile.c_str());
+            std::println("Error writing to {}", outfile);
         }
     } else {
-        printf("Error fetching URL\n");
+        std::println("Error fetching URL");
     }
     HeapFree(GetProcessHeap(), 0, body);
 }
+
 int main(int argc, char **argv) {
-    GetModuleFileNameA(NULL, g_ExeDir, MAX_PATH);
+    GetModuleFileNameA(nullptr, g_ExeDir, MAX_PATH);
     char *last_slash = strrchr(g_ExeDir, '\\');
     if (last_slash) *last_slash = '\0';
 
@@ -415,26 +464,26 @@ int main(int argc, char **argv) {
     load_config();
 
     if (argc > 1) {
-        const char *a = argv[1];
-        if (!_stricmp(a, "-install") || !_stricmp(a, "/install")) { do_install(); return 0; }
-        if (!_stricmp(a, "-uninstall") || !_stricmp(a, "/uninstall") || !_stricmp(a, "-remove")) { do_uninstall(); return 0; }
-        if (!_stricmp(a, "-console") || !_stricmp(a, "/console") || !_stricmp(a, "-c")) { run_console(); return 0; }
-        if (!_stricmp(a, "-convert")) { run_convert(argc, argv); return 0; }
+        std::string_view a = argv[1];
+        if (iequals(a, "-install") || iequals(a, "/install")) { do_install(); return 0; }
+        if (iequals(a, "-uninstall") || iequals(a, "/uninstall") || iequals(a, "-remove")) { do_uninstall(); return 0; }
+        if (iequals(a, "-console") || iequals(a, "/console") || iequals(a, "-c")) { run_console(); return 0; }
+        if (iequals(a, "-convert")) { run_convert(argc, argv); return 0; }
 
-        printf("Subscription Bridge & Embedded Subconverter\n\n"
-            "  %s -install                    install + start service\n"
-            "  %s -uninstall                  stop + remove service\n"
-            "  %s -console                    run in foreground\n"
-            "  %s -convert <target> <url> [f] static file convert\n", argv[0], argv[0], argv[0], argv[0]);
+        std::println("Subscription Bridge & Embedded Subconverter\n");
+        std::println("  {} -install                    install + start service", argv[0]);
+        std::println("  {} -uninstall                  stop + remove service", argv[0]);
+        std::println("  {} -console                    run in foreground", argv[0]);
+        std::println("  {} -convert <target> <url> [f] static file convert", argv[0]);
         return 1;
     }
 
-    SERVICE_TABLE_ENTRYA tbl[] = { { (char *)SVC_NAME, svc_main }, { NULL, NULL } };
+    SERVICE_TABLE_ENTRYA tbl[] = { { const_cast<char *>(SVC_NAME), svc_main }, { nullptr, nullptr } };
     if (!StartServiceCtrlDispatcherA(tbl)) {
         if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-            puts("Not launched by SCM.");
-            puts("  Use  -console   to run interactively");
-            puts("  Use  -install   to install as a service");
+            std::println("Not launched by SCM.");
+            std::println("  Use  -console   to run interactively");
+            std::println("  Use  -install   to install as a service");
         }
     }
     return 0;
