@@ -247,7 +247,7 @@ void run_console(void) {
 void run_convert(int argc, char **argv) {
     if (argc < 4) {
         printf("Usage: sub_bridge -convert <target> <url> [output_file]\n");
-        printf("Targets: clash, singbox, singbox-pc\n");
+        printf("Targets: clash, singbox, singbox-pc, xray\n");
         return;
     }
     std::string target = argv[2];
@@ -345,6 +345,8 @@ void run_convert(int argc, char **argv) {
                 size_t first_char = payload.find_first_not_of(" \t\r\n");
                 if (first_char != std::string::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
                     decoded = payload;
+                } else if (payload.find("proxies:") != std::string::npos) {
+                    decoded = payload;
                 } else {
                     decoded = (payload.find("://") != std::string::npos) ? payload : base64_decode(payload);
                 }
@@ -384,6 +386,8 @@ void run_convert(int argc, char **argv) {
             out_payload = gen_singbox(all_proxies, "android", all_rules);
         } else if (target == "singbox-pc" || target == "sing-box-pc") {
             out_payload = gen_singbox(all_proxies, "pc", all_rules);
+        } else if (target == "xray" || target == "xray-json" || target == "v2ray-json") {
+            out_payload = gen_xray(all_proxies, "", all_rules);
         } else {
             out_payload = gen_v2ray(all_proxies);
         }

@@ -153,7 +153,10 @@ static std::string metadata_headers(const SubMetadata& meta) {
 
 static const char *converted_content_type(const std::string& target) {
     if (target == "clash") return "text/yaml; charset=utf-8";
-    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc") return "application/json; charset=utf-8";
+    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
+        target == "xray" || target == "xray-json" || target == "v2ray-json") {
+        return "application/json; charset=utf-8";
+    }
     return "text/plain; charset=utf-8";
 }
 
@@ -165,8 +168,9 @@ static bool preferred_metadata_source(const std::string& target, const Route& rt
     if (target == "v2ray") {
         return contains_ci(meta.content_type, "text/plain");
     }
-    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc") {
-        return contains_ci(ua, "sing") || contains_ci(meta.content_type, "json");
+    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
+        target == "xray" || target == "xray-json" || target == "v2ray-json") {
+        return contains_ci(ua, "sing") || contains_ci(ua, "xray") || contains_ci(meta.content_type, "json");
     }
     return false;
 }
@@ -206,6 +210,15 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
     uc.dwExtraInfoLength = -1;
 
     if (!WinHttpCrackUrl(wurl, 0, 0, &uc)) {
+        FILE *f = nullptr;
+        if (fopen_s(&f, full_url, "rb") == 0 && f) {
+            int n = (int)fread(buf, 1, cap - 1, f);
+            fclose(f);
+            if (n >= 0) {
+                buf[n] = '\0';
+                return n;
+            }
+        }
         return -1;
     }
 
@@ -397,6 +410,8 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
                 size_t first_char = payload.find_first_not_of(" \t\r\n");
                 if (first_char != std::string::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
                     decoded = payload;
+                } else if (payload.find("proxies:") != std::string::npos) {
+                    decoded = payload;
                 } else {
                     decoded = (payload.find("://") != std::string::npos) ? payload : base64_decode(payload);
                 }
@@ -442,6 +457,9 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
             content_type = converted_content_type(target);
         } else if (target == "singbox-pc" || target == "sing-box-pc") {
             out_payload = gen_singbox(all_proxies, "pc", all_rules);
+            content_type = converted_content_type(target);
+        } else if (target == "xray" || target == "xray-json" || target == "v2ray-json") {
+            out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
             content_type = converted_content_type(target);
         } else if (!target.empty()) {
             out_payload = gen_v2ray(all_proxies);

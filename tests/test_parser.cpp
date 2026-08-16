@@ -123,13 +123,124 @@ void test_rules() {
     std::cout << "test_rules passed.\n";
 }
 
+void test_clash_to_singbox_and_xray() {
+    std::string clash_yaml = 
+        "mixed-port: 7890\n"
+        "proxies:\n"
+        "  - name: \"Germany Reality\"\n"
+        "    type: vless\n"
+        "    server: example.org\n"
+        "    port: 47005\n"
+        "    uuid: example-uuid-0000-0000-0000-00000000\n"
+        "    udp: true\n"
+        "    flow: xtls-rprx-vision\n"
+        "    tls: true\n"
+        "    servername: example.com\n"
+        "    client-fingerprint: firefox\n"
+        "    reality-opts:\n"
+        "      public-key: example-public-key\n"
+        "      short-id: 16ee3a5f0387c553\n"
+        "  - name: \"US HTTPS Proxy\"\n"
+        "    type: https\n"
+        "    server: 1.1.1.1\n"
+        "    port: 8443\n"
+        "    password: mysecret\n"
+        "    sni: myproxy.com\n"
+        "  - name: \"SS Node\"\n"
+        "    type: ss\n"
+        "    server: 2.2.2.2\n"
+        "    port: 8388\n"
+        "    cipher: aes-256-gcm\n"
+        "    password: sspass\n"
+        "rules:\n"
+        "  - DOMAIN-SUFFIX,img.avito.st,REJECT\n"
+        "  - IP-CIDR,255.255.255.255/32,DIRECT,no-resolve\n"
+        "  - MATCH,Proxy\n";
+
+    std::vector<Proxy> proxies = parse_proxies(clash_yaml);
+    assert(proxies.size() == 3);
+    assert(strcmp(proxies[0].protocol, "vless") == 0);
+    assert(strcmp(proxies[0].security, "reality") == 0);
+    assert(strcmp(proxies[0].server, "example.org") == 0);
+    assert(proxies[0].port == 47005);
+    assert(strcmp(proxies[0].pbk, "example-public-key") == 0);
+
+    assert(strcmp(proxies[1].protocol, "https") == 0);
+    assert(proxies[1].port == 8443);
+
+    assert(strcmp(proxies[2].protocol, "shadowsocks") == 0);
+    assert(strcmp(proxies[2].cipher, "aes-256-gcm") == 0);
+
+    std::vector<Rule> rules = parse_xray_rules(clash_yaml);
+    assert(rules.size() >= 2);
+
+    // Singbox generation
+    std::string sb = gen_singbox(proxies, "android", rules);
+    assert(sb.find("\"type\": \"https\"") == std::string::npos); // NO "type": "https"
+    assert(sb.find("\"type\": \"http\"") != std::string::npos);   // Translated to "http" with TLS
+    assert(sb.find("\"type\": \"shadowsocks\"") != std::string::npos);
+    assert(sb.find("\"method\": \"aes-256-gcm\"") != std::string::npos);
+    assert(sb.find("\"public_key\": \"example-public-key\"") != std::string::npos);
+
+    // Xray generation
+    std::string xray = gen_xray(proxies, "My Profile", rules);
+    assert(xray.find("\"routing\"") != std::string::npos);
+    assert(xray.find("\"inbounds\"") != std::string::npos);
+    assert(xray.find("\"outbounds\"") != std::string::npos);
+    assert(xray.find("\"protocol\": \"vless\"") != std::string::npos);
+    assert(xray.find("\"security\": \"reality\"") != std::string::npos);
+    assert(xray.find("\"remarks\": \"My Profile\"") != std::string::npos);
+
+    std::cout << "test_clash_to_singbox_and_xray passed.\n";
+}
+
+void test_xray_grpc_roundtrip() {
+    std::ifstream file("reference/original.json");
+    if (!file.is_open()) file.open("../reference/original.json");
+    if (!file.is_open()) file.open("../../reference/original.json");
+    if (file.is_open()) {
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        std::string content = buffer.str();
+
+        std::vector<Proxy> proxies = parse_proxies(content);
+        assert(proxies.size() == 1);
+        assert(strcmp(proxies[0].protocol, "vless") == 0);
+        assert(strcmp(proxies[0].type, "grpc") == 0);
+        assert(strcmp(proxies[0].path, "qwen-services-8443") == 0);
+        assert(strcmp(proxies[0].sni, "chat.qwen.ai") == 0);
+        assert(strcmp(proxies[0].pbk, "sm4JzfsMkmDUreMh_2BQQu8IZIrWYja9qgF2mxFvIUo") == 0);
+        assert(strcmp(proxies[0].sid, "BDD9BC8C2A0F70D0") == 0);
+
+        std::vector<Rule> rules = parse_xray_rules(content);
+        std::string clash_yaml = gen_clash(proxies, rules);
+        assert(clash_yaml.find("grpc-service-name: qwen-services-8443") != std::string::npos);
+
+        std::vector<Proxy> re_proxies = parse_proxies(clash_yaml);
+        assert(re_proxies.size() == 1);
+        assert(strcmp(re_proxies[0].path, "qwen-services-8443") == 0);
+        assert(strcmp(re_proxies[0].type, "grpc") == 0);
+
+        std::string re_xray = gen_xray(re_proxies, "🇪🇪Эстония 2 test", rules);
+        assert(re_xray.find("\"serviceName\": \"qwen-services-8443\"") != std::string::npos);
+
+        std::string re_sb = gen_singbox(re_proxies, "android", rules);
+        assert(re_sb.find("\"service_name\": \"qwen-services-8443\"") != std::string::npos);
+
+        std::cout << "test_xray_grpc_roundtrip passed.\n";
+    }
+}
+
 int main() {
     std::cout << "Running tests...\n";
     test_base64();
     test_parse_uri();
     test_rules();
+    test_clash_to_singbox_and_xray();
+    test_xray_grpc_roundtrip();
     std::cout << "All tests passed successfully.\n";
     return 0;
 }
+
 
 
