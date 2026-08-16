@@ -231,6 +231,54 @@ void test_xray_grpc_roundtrip() {
     }
 }
 
+void test_multi_xray_json_subscription() {
+    std::string multi_json = 
+        "[\n"
+        "  {\n"
+        "    \"remarks\": \"Server-US\",\n"
+        "    \"outbounds\": [\n"
+        "      {\n"
+        "        \"protocol\": \"vless\",\n"
+        "        \"settings\": { \"address\": \"1.1.1.1\", \"port\": 443, \"id\": \"uuid-1\" },\n"
+        "        \"streamSettings\": { \"network\": \"ws\", \"security\": \"tls\", \"serverName\": \"us.example.com\" }\n"
+        "      },\n"
+        "      { \"protocol\": \"freedom\", \"tag\": \"direct\" }\n"
+        "    ]\n"
+        "  },\n"
+        "  {\n"
+        "    \"remarks\": \"Server-DE\",\n"
+        "    \"outbounds\": [\n"
+        "      {\n"
+        "        \"protocol\": \"trojan\",\n"
+        "        \"settings\": { \"address\": \"2.2.2.2\", \"port\": 8443, \"password\": \"trojan-pass\" },\n"
+        "        \"streamSettings\": { \"network\": \"grpc\", \"security\": \"reality\", \"grpcSettings\": { \"serviceName\": \"de-grpc\" }, \"realitySettings\": { \"publicKey\": \"pbk-de\", \"shortId\": \"sid-de\", \"serverName\": \"de.example.com\" } }\n"
+        "      }\n"
+        "    ]\n"
+        "  }\n"
+        "]\n";
+
+    std::vector<Proxy> proxies = parse_proxies(multi_json);
+    assert(proxies.size() == 2);
+    assert(strcmp(proxies[0].name, "Server-US") == 0);
+    assert(strcmp(proxies[0].protocol, "vless") == 0);
+    assert(strcmp(proxies[0].server, "1.1.1.1") == 0);
+    assert(proxies[0].port == 443);
+
+    assert(strcmp(proxies[1].name, "Server-DE") == 0);
+    assert(strcmp(proxies[1].protocol, "trojan") == 0);
+    assert(strcmp(proxies[1].server, "2.2.2.2") == 0);
+    assert(strcmp(proxies[1].path, "de-grpc") == 0);
+
+    std::string xray_links = gen_v2ray(proxies);
+    assert(!xray_links.empty());
+    std::string decoded_links = base64_decode(xray_links);
+    assert(decoded_links.find("vless://") != std::string::npos);
+    assert(decoded_links.find("trojan://") != std::string::npos);
+    assert(decoded_links.find("serviceName=de-grpc") != std::string::npos);
+
+    std::cout << "test_multi_xray_json_subscription passed.\n";
+}
+
 int main() {
     std::cout << "Running tests...\n";
     test_base64();
@@ -238,6 +286,7 @@ int main() {
     test_rules();
     test_clash_to_singbox_and_xray();
     test_xray_grpc_roundtrip();
+    test_multi_xray_json_subscription();
     std::cout << "All tests passed successfully.\n";
     return 0;
 }

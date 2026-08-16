@@ -716,51 +716,13 @@ std::vector<Proxy> parse_proxies(const std::string& decoded) {
 
     std::vector<Proxy> proxies;
 
-    size_t outbounds_pos = decoded.find("\"outbounds\"");
-    if (outbounds_pos != std::string::npos) {
-        std::string remarks = json_extract_string(decoded, "remarks");
-        if (remarks.empty()) remarks = json_extract_string(decoded, "ps");
-
-        size_t arr_start = decoded.find("[", outbounds_pos);
-        if (arr_start != std::string::npos) {
-            int depth = 0;
-            size_t arr_end = arr_start;
-            for (size_t i = arr_start; i < decoded.length(); i++) {
-                if (decoded[i] == '[') depth++;
-                else if (decoded[i] == ']') {
-                    depth--;
-                    if (depth == 0) { arr_end = i; break; }
-                }
-            }
-            std::string block = decoded.substr(arr_start + 1, arr_end - arr_start - 1);
-            size_t start = 0;
-            while ((start = block.find("{", start)) != std::string::npos) {
-                int d = 0;
-                size_t end = start;
-                for (size_t i = start; i < block.length(); i++) {
-                    if (block[i] == '{') d++;
-                    else if (block[i] == '}') {
-                        d--;
-                        if (d == 0) { end = i; break; }
-                    }
-                }
-                if (d == 0 && end > start) {
-                    std::string out_item = block.substr(start, end - start + 1);
-                    Proxy p = parse_xray_outbound_obj(out_item, remarks);
-                    if (p.protocol[0] != '\0') {
-                        proxies.push_back(p);
-                    }
-                    start = end + 1;
-                } else break;
-            }
-            if (!proxies.empty()) return proxies;
-        }
-    }
-
     size_t first_char = decoded.find_first_not_of(" \t\r\n");
     if (first_char != std::string::npos && (decoded[first_char] == '[' || decoded[first_char] == '{')) {
-        size_t start = first_char;
-        while ((start = decoded.find("{", start)) != std::string::npos) {
+        size_t search_pos = 0;
+        while (search_pos < decoded.length()) {
+            size_t start = decoded.find("{", search_pos);
+            if (start == std::string::npos) break;
+
             int depth = 0;
             size_t end = start;
             for (size_t i = start; i < decoded.length(); i++) {
@@ -770,13 +732,56 @@ std::vector<Proxy> parse_proxies(const std::string& decoded) {
                     if (depth == 0) { end = i; break; }
                 }
             }
+
             if (depth == 0 && end > start) {
-                std::string obj = decoded.substr(start, end - start + 1);
-                Proxy p = parse_xray_outbound_obj(obj, "");
-                if (p.protocol[0] != '\0') {
-                    proxies.push_back(p);
+                std::string config_obj = decoded.substr(start, end - start + 1);
+                std::string remarks = json_extract_string(config_obj, "remarks");
+                if (remarks.empty()) remarks = json_extract_string(config_obj, "ps");
+
+                size_t outbounds_pos = config_obj.find("\"outbounds\"");
+                if (outbounds_pos != std::string::npos) {
+                    size_t arr_start = config_obj.find("[", outbounds_pos);
+                    if (arr_start != std::string::npos) {
+                        int arr_depth = 0;
+                        size_t arr_end = arr_start;
+                        for (size_t i = arr_start; i < config_obj.length(); i++) {
+                            if (config_obj[i] == '[') arr_depth++;
+                            else if (config_obj[i] == ']') {
+                                arr_depth--;
+                                if (arr_depth == 0) { arr_end = i; break; }
+                            }
+                        }
+                        std::string out_block = config_obj.substr(arr_start + 1, arr_end - arr_start - 1);
+                        size_t item_start = 0;
+                        while ((item_start = out_block.find("{", item_start)) != std::string::npos) {
+                            int d = 0;
+                            size_t item_end = item_start;
+                            for (size_t i = item_start; i < out_block.length(); i++) {
+                                if (out_block[i] == '{') d++;
+                                else if (out_block[i] == '}') {
+                                    d--;
+                                    if (d == 0) { item_end = i; break; }
+                                }
+                            }
+                            if (d == 0 && item_end > item_start) {
+                                std::string out_item = out_block.substr(item_start, item_end - item_start + 1);
+                                Proxy p = parse_xray_outbound_obj(out_item, remarks);
+                                if (p.protocol[0] != '\0') {
+                                    proxies.push_back(p);
+                                }
+                                item_start = item_end + 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    Proxy p = parse_xray_outbound_obj(config_obj, remarks);
+                    if (p.protocol[0] != '\0') {
+                        proxies.push_back(p);
+                    }
                 }
-                start = end + 1;
+                search_pos = end + 1;
             } else {
                 break;
             }
