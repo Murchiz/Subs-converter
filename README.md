@@ -87,7 +87,9 @@ user_agent1 = v2rayng
 # Port 25502 -> Clash / Mihomo YAML
 # Port 25503 -> Sing-Box Android JSON
 # Port 25504 -> Sing-Box PC JSON
-converts = clash, singbox, singbox-pc
+# Port 25505 -> Xray / V2Ray Share Links (Base64)
+# Port 25506 -> Xray Standalone Config JSON
+converts = clash, singbox, singbox-pc, xray, xray-one
 ```
 
 ---
@@ -111,13 +113,15 @@ Install and register SubBridge as an automatic background service:
 ```
 
 ### 3. One-Shot File Converter
-Convert any remote subscription URL directly into a configuration file:
+Convert any subscription URL or file directly into a configuration file:
 ```powershell
-# Syntax: .\sub_bridge.exe -convert <target> <url> [output_file]
-# Targets: clash, singbox, singbox-pc, v2ray
+# Syntax: .\sub_bridge.exe -convert <target> <url_or_file> [output_file]
+# Targets: clash, singbox, singbox-pc, xray, xray-one, v2ray
 
 .\sub_bridge.exe -convert clash "https://example.com/sub" clash_config.yaml
 .\sub_bridge.exe -convert singbox "https://example.com/sub" singbox_config.json
+.\sub_bridge.exe -convert xray "https://example.com/sub" xray_links.txt
+.\sub_bridge.exe -convert xray-one "https://example.com/sub" xray_config.json
 ```
 
 ### 4. Subconverter HTTP Endpoint

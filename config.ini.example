@@ -40,8 +40,8 @@ user_agent1 = v2rayng
 #   - http://127.0.0.1:25501 (Raw / Merged V2Ray Base64)
 #   - http://127.0.0.1:25502 (Clash / Mihomo YAML)
 #   - http://127.0.0.1:25503 (Sing-Box Android JSON)
-# Supported targets: clash, singbox, singbox-pc
-converts = clash, singbox, singbox-pc
+# Supported targets: clash, singbox, singbox-pc, xray, xray-one
+converts = clash, singbox, singbox-pc, xray, xray-one
 
 # ------------------------------------------------------------------------------
 # Additional Subscription Example

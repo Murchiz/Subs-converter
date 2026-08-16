@@ -154,7 +154,7 @@ static std::string metadata_headers(const SubMetadata& meta) {
 static const char *converted_content_type(const std::string& target) {
     if (target == "clash") return "text/yaml; charset=utf-8";
     if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
-        target == "xray" || target == "xray-json" || target == "v2ray-json") {
+        target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
         return "application/json; charset=utf-8";
     }
     return "text/plain; charset=utf-8";
@@ -165,11 +165,11 @@ static bool preferred_metadata_source(const std::string& target, const Route& rt
     if (target == "clash") {
         return contains_ci(ua, "clash") || contains_ci(meta.content_type, "yaml");
     }
-    if (target == "v2ray") {
+    if (target == "v2ray" || target == "xray") {
         return contains_ci(meta.content_type, "text/plain");
     }
     if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
-        target == "xray" || target == "xray-json" || target == "v2ray-json") {
+        target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
         return contains_ci(ua, "sing") || contains_ci(ua, "xray") || contains_ci(meta.content_type, "json");
     }
     return false;
@@ -458,10 +458,10 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
         } else if (target == "singbox-pc" || target == "sing-box-pc") {
             out_payload = gen_singbox(all_proxies, "pc", all_rules);
             content_type = converted_content_type(target);
-        } else if (target == "xray" || target == "xray-json" || target == "v2ray-json") {
+        } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
             out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
             content_type = converted_content_type(target);
-        } else if (!target.empty()) {
+        } else if (target == "xray" || target == "v2ray" || !target.empty()) {
             out_payload = gen_v2ray(all_proxies);
             content_type = converted_content_type(target);
         } else {

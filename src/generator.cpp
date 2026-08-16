@@ -642,20 +642,37 @@ std::string gen_v2ray(const std::vector<Proxy>& proxies) {
         if (strcmp(p.protocol, "vless") == 0 || strcmp(p.protocol, "trojan") == 0) {
             std::string uri = std::string(p.protocol) + "://" + p.uuid + "@" + p.server + ":" + std::to_string(p.port) + "?";
             if (strcmp(p.protocol, "vless") == 0) uri += "encryption=none&";
-            uri += "type=" + std::string(p.type[0] ? p.type : "tcp");
-            if (p.security[0]) uri += "&security=" + std::string(p.security);
-            if (p.sni[0]) uri += "&sni=" + std::string(p.sni);
-            if (p.fp[0]) uri += "&fp=" + std::string(p.fp);
-            if (p.pbk[0]) uri += "&pbk=" + std::string(p.pbk);
-            if (p.sid[0]) uri += "&sid=" + std::string(p.sid);
-            if (p.host[0]) uri += "&host=" + std::string(url_encode(p.host));
-            if (p.path[0]) uri += "&path=" + std::string(url_encode(p.path));
-            if (p.alpn[0]) uri += "&alpn=" + std::string(url_encode(p.alpn));
-            if (p.flow[0]) uri += "&flow=" + std::string(p.flow);
-            if (p.extra[0]) uri += "&extra=" + std::string(url_encode(p.extra));
+            
+            std::string net = p.type[0] ? p.type : "tcp";
+            if (net == "httpupgrade") net = "ws";
+            uri += "type=" + net + "&";
+
+            if (p.security[0]) uri += "security=" + std::string(p.security) + "&";
+            if (p.flow[0]) uri += "flow=" + std::string(p.flow) + "&";
+            if (p.sni[0]) uri += "sni=" + std::string(p.sni) + "&";
+            if (p.fp[0]) uri += "fp=" + std::string(p.fp) + "&";
+            if (p.pbk[0]) uri += "pbk=" + std::string(p.pbk) + "&";
+            if (p.sid[0]) uri += "sid=" + std::string(p.sid) + "&";
+            if (p.host[0]) uri += "host=" + std::string(url_encode(p.host)) + "&";
+
+            if (net == "grpc") {
+                uri += "serviceName=" + std::string(url_encode(p.path)) + "&";
+                uri += "mode=" + std::string(p.mode[0] ? p.mode : "gun") + "&";
+            } else if (p.path[0]) {
+                uri += "path=" + std::string(url_encode(p.path)) + "&";
+            }
+
+            if (p.alpn[0]) uri += "alpn=" + std::string(url_encode(p.alpn)) + "&";
+            if (p.extra[0]) uri += "extra=" + std::string(url_encode(p.extra)) + "&";
             
             if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
             
+            uri += "#" + std::string(url_encode(p.name));
+            out += uri + "\n";
+        }
+        else if (strcmp(p.protocol, "shadowsocks") == 0 || strcmp(p.protocol, "ss") == 0) {
+            std::string userinfo = std::string(p.cipher[0] ? p.cipher : "aes-128-gcm") + ":" + std::string(p.uuid);
+            std::string uri = "ss://" + base64_encode(userinfo) + "@" + std::string(p.server) + ":" + std::to_string(p.port);
             uri += "#" + std::string(url_encode(p.name));
             out += uri + "\n";
         }
@@ -663,7 +680,7 @@ std::string gen_v2ray(const std::vector<Proxy>& proxies) {
             std::string json = "{\"v\":\"2\",\"ps\":\"" + std::string(p.name) + "\",\"add\":\"" + std::string(p.server) + "\",\"port\":\"" + std::to_string(p.port) + "\",\"id\":\"" + std::string(p.uuid) + "\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"" + std::string(p.type[0] ? p.type : "tcp") + "\",\"type\":\"none\",\"host\":\"" + std::string(p.host) + "\",\"path\":\"" + std::string(p.path) + "\",\"tls\":\"" + std::string(p.security[0] ? p.security : "") + "\",\"sni\":\"" + std::string(p.sni) + "\",\"alpn\":\"" + std::string(p.alpn) + "\"}";
             out += "vmess://" + base64_encode(json) + "\n";
         }
-        else if (strcmp(p.protocol, "hysteria2") == 0) {
+        else if (strcmp(p.protocol, "hysteria2") == 0 || strcmp(p.protocol, "hy2") == 0) {
             std::string uri = "hysteria2://" + std::string(p.uuid) + "@" + p.server + ":" + std::to_string(p.port) + "?";
             if (p.sni[0]) uri += "sni=" + std::string(p.sni) + "&";
             if (p.obfs[0]) uri += "obfs=" + std::string(p.obfs) + "&";
