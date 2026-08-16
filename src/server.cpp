@@ -306,7 +306,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     size_t space_pos = req.find(' ', q_pos);
     if (q_pos == std::string::npos || space_pos == std::string::npos) {
         const char *r = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-        send(c, r, strlen(r), 0);
+        send(c, r, (int)strlen(r), 0);
         return;
     }
 
@@ -329,7 +329,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
 
     if (url.empty()) {
         const char *r = "HTTP/1.1 400 Missing URL\r\nConnection: close\r\n\r\n";
-        send(c, r, strlen(r), 0);
+        send(c, r, (int)strlen(r), 0);
         return;
     }
 
@@ -535,7 +535,7 @@ void handle_subconverter(SOCKET c, const std::string& req) {
         logm("  [SUBCONV] target=%s -> 200 OK (%zu bytes)\n", target.c_str(), out_payload.length());
     } else {
         std::string e = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n";
-        send(c, e.c_str(), e.length(), 0);
+        send(c, e.c_str(), (int)e.length(), 0);
         logm("  [SUBCONV] target=%s -> 502 Fail\n", target.c_str());
     }
     HeapFree(GetProcessHeap(), 0, body);

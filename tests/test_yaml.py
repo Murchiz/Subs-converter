@@ -1,7 +1,25 @@
-import re
+import os
+import sys
 
 def test():
-    with open('reference/meta.yaml', 'r', encoding='utf-8') as f:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(script_dir, 'reference', 'meta.yaml'),
+        os.path.join(script_dir, '..', 'reference', 'meta.yaml'),
+        'tests/reference/meta.yaml',
+        'reference/meta.yaml'
+    ]
+    meta_path = None
+    for c in candidates:
+        if os.path.isfile(c):
+            meta_path = c
+            break
+
+    if not meta_path:
+        print("Error: meta.yaml not found", file=sys.stderr)
+        sys.exit(1)
+
+    with open(meta_path, 'r', encoding='utf-8') as f:
         payload = f.read()
 
     p_start = payload.find("proxies:")
