@@ -193,13 +193,7 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
 
     if (out_meta) memset(out_meta, 0, sizeof(*out_meta));
 
-    if (rt->is_convert) {
-        snprintf(full_url, sizeof(full_url),
-                 "http://127.0.0.1:25500/sub?target=%s&url=http%%3A%%2F%%2F127.0.0.1%%3A%d",
-                 rt->target, rt->base_port);
-    } else {
-        copy_limited(full_url, sizeof(full_url), rt->urls[url_index]);
-    }
+    copy_limited(full_url, sizeof(full_url), rt->urls[url_index]);
 
     wchar_t wurl[4096];
     MultiByteToWideChar(CP_UTF8, 0, full_url, -1, wurl, 4096);
@@ -301,6 +295,184 @@ out:
     if (hS) WinHttpCloseHandle(hS);
     return total;
 }
+static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::string& target, int log_port) {
+    char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
+    if (!body) {
+        const char *e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOOM";
+        send(c, e, (int)strlen(e), 0);
+        return;
+    }
+
+    std::string out_payload;
+    std::string raw_clash_proxies;
+    std::string raw_clash_names;
+    std::vector<Proxy> all_proxies;
+    std::vector<Rule> all_rules;
+    int success_count = 0;
+
+    SubMetadata meta = {0};
+    bool have_preferred_meta = false;
+
+    for (int i = 0; i < source_rt->url_count; i++) {
+        SubMetadata temp_meta = {0};
+        int blen = fetch_url(source_rt, body, BODY_CAP, NULL, i, &temp_meta);
+        if (blen >= 0) {
+            success_count++;
+            if (!target.empty()) {
+                merge_metadata_for_target(meta, temp_meta, preferred_metadata_source(target, *source_rt, i, temp_meta), have_preferred_meta);
+            } else {
+                merge_metadata(meta, temp_meta);
+            }
+
+            std::string payload(body, blen);
+
+            if (target == "clash" && payload.find("proxies:") != std::string::npos) {
+                // Extract Native Clash YAML proxies
+                size_t p_start = payload.find("proxies:");
+                if (p_start != std::string::npos) {
+                    p_start += 8;
+                    if (p_start < payload.length() && payload[p_start] == '\r') p_start++;
+                    if (p_start < payload.length() && payload[p_start] == '\n') p_start++;
+
+                    size_t next_section = std::string::npos;
+                    size_t search_pos = p_start;
+                    while ((search_pos = payload.find('\n', search_pos)) != std::string::npos) {
+                        search_pos++;
+                        if (search_pos < payload.length() && isalpha((unsigned char)payload[search_pos])) {
+                            next_section = search_pos;
+                            break;
+                        }
+                    }
+                    size_t p_end = (next_section != std::string::npos) ? next_section : payload.length();
+                    std::string block = payload.substr(p_start, p_end - p_start);
+
+                    std::string filtered_block;
+                    size_t search_start = 0;
+                    while (true) {
+                        size_t name_pos = block.find("- name:", search_start);
+                        if (name_pos == std::string::npos) break;
+
+                        size_t node_start = name_pos;
+                        while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
+                            node_start--;
+                        }
+
+                        size_t next_name_pos = block.find("- name:", name_pos + 7);
+                        size_t next_node_start = block.length();
+                        if (next_name_pos != std::string::npos) {
+                            next_node_start = next_name_pos;
+                            while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
+                                next_node_start--;
+                            }
+                        }
+
+                        std::string node_str = block.substr(node_start, next_node_start - node_start);
+                        filtered_block += node_str;
+
+                        size_t n_pos = node_str.find("- name:");
+                        size_t end_line = node_str.find('\n', n_pos);
+                        if (end_line == std::string::npos) end_line = node_str.length();
+                        size_t val_start = node_str.find_first_not_of(" \t", n_pos + 7);
+                        if (val_start != std::string::npos && val_start < end_line) {
+                            size_t val_end = end_line - 1;
+                            while (val_end >= val_start && (node_str[val_end] == ' ' || node_str[val_end] == '\t' || node_str[val_end] == '\r' || node_str[val_end] == '\n')) {
+                                val_end--;
+                            }
+                            if (val_start <= val_end) {
+                                std::string raw_name = node_str.substr(val_start, val_end - val_start + 1);
+                                if (raw_name.length() >= 2 && ((raw_name.front() == '"' && raw_name.back() == '"') ||
+                                    (raw_name.front() == '\'' && raw_name.back() == '\''))) {
+                                    raw_name = raw_name.substr(1, raw_name.length() - 2);
+                                }
+                                raw_clash_names += "      - \"" + raw_name + "\"\n";
+                            }
+                        }
+
+                        search_start = next_name_pos;
+                    }
+                    raw_clash_proxies += filtered_block;
+                }
+            } else if (!target.empty()) {
+                std::string decoded;
+                size_t first_char = payload.find_first_not_of(" \t\r\n");
+                if (first_char != std::string::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
+                    decoded = payload;
+                } else {
+                    decoded = (payload.find("://") != std::string::npos) ? payload : base64_decode(payload);
+                }
+                auto p = parse_proxies(decoded);
+                all_proxies.insert(all_proxies.end(), p.begin(), p.end());
+                auto r = parse_xray_rules(decoded);
+                all_rules.insert(all_rules.end(), r.begin(), r.end());
+            } else {
+                if (!out_payload.empty()) out_payload += "\n";
+                out_payload.append(body, blen);
+            }
+        }
+    }
+
+    if (success_count > 0) {
+        std::string content_type;
+        if (target == "clash") {
+            out_payload = gen_clash(all_proxies, all_rules);
+            if (!raw_clash_proxies.empty()) {
+                while (!raw_clash_proxies.empty() && isspace((unsigned char)raw_clash_proxies.back())) {
+                    raw_clash_proxies.pop_back();
+                }
+                raw_clash_proxies += "\n";
+
+                size_t pg = out_payload.find("proxy-groups:");
+                if (pg != std::string::npos) {
+                    out_payload.insert(pg, raw_clash_proxies);
+
+                    size_t auto_grp = out_payload.find("  - name: Auto\n    type: url-test");
+                    if (auto_grp != std::string::npos) {
+                        out_payload.insert(auto_grp, raw_clash_names);
+                    }
+
+                    size_t rules = out_payload.find("rules:");
+                    if (rules != std::string::npos) {
+                        out_payload.insert(rules, raw_clash_names);
+                    }
+                }
+            }
+            content_type = converted_content_type(target);
+        } else if (target == "singbox" || target == "sing-box") {
+            out_payload = gen_singbox(all_proxies, "android", all_rules);
+            content_type = converted_content_type(target);
+        } else if (target == "singbox-pc" || target == "sing-box-pc") {
+            out_payload = gen_singbox(all_proxies, "pc", all_rules);
+            content_type = converted_content_type(target);
+        } else if (!target.empty()) {
+            out_payload = gen_v2ray(all_proxies);
+            content_type = converted_content_type(target);
+        } else {
+            content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
+        }
+
+        apply_route_name(meta, source_rt->name);
+        std::string extra_hdrs = metadata_headers(meta);
+
+        std::string hdr = "HTTP/1.1 200 OK\r\n"
+                          "Content-Type: " + content_type + "\r\n"
+                          "Content-Length: " + std::to_string(out_payload.length()) + "\r\n"
+                          + extra_hdrs +
+                          "Connection: close\r\n\r\n";
+        send(c, hdr.c_str(), (int)hdr.length(), 0);
+        send(c, out_payload.c_str(), (int)out_payload.length(), 0);
+        if (!target.empty()) {
+            logm("  [OK] Port %d (target=%s) -> 200 OK (%zu bytes)\n\n", log_port, target.c_str(), out_payload.length());
+        } else {
+            logm("  [OK] Port %d -> 200 OK (%zu bytes)\n\n", log_port, out_payload.length());
+        }
+    } else {
+        std::string e = "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: 15\r\nConnection: close\r\n\r\nupstream failed";
+        send(c, e.c_str(), (int)e.length(), 0);
+        logm("  [FAIL] Port %d -> 502 Upstream Failed\n\n", log_port);
+    }
+    HeapFree(GetProcessHeap(), 0, body);
+}
+
 void handle_subconverter(SOCKET c, const std::string& req) {
     size_t q_pos = req.find('?');
     size_t space_pos = req.find(' ', q_pos);
@@ -338,208 +510,24 @@ void handle_subconverter(SOCKET c, const std::string& req) {
     if (url.find("http://127.0.0.1:") == 0) {
         internal_port = atoi(url.c_str() + 17);
     }
-    
-    bool matched_route = false;
+
+    const Route *source_rt = &temp_rt;
     if (internal_port > 0) {
         for (int i = 0; i < g_RouteCount; i++) {
             if (g_Routes[i].local_port == internal_port) {
-                temp_rt.url_count = g_Routes[i].url_count;
-                copy_limited(temp_rt.name, sizeof(temp_rt.name), g_Routes[i].name);
-                for (int j = 0; j < temp_rt.url_count; j++) {
-                    copy_limited(temp_rt.urls[j], sizeof(temp_rt.urls[j]), g_Routes[i].urls[j]);
-                    if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
-                        copy_limited(temp_rt.user_agents[j], sizeof(temp_rt.user_agents[j]), "Happ/3.23.0");
-                    } else {
-                        copy_limited(temp_rt.user_agents[j], sizeof(temp_rt.user_agents[j]), g_Routes[i].user_agents[j]);
-                    }
-                }
-                temp_rt.use_hwid = g_Routes[i].use_hwid;
-                matched_route = true;
+                source_rt = &g_Routes[i];
                 break;
             }
         }
-    } else {
-        // Try matching raw URL to inherit configured User-Agent
-        for (int i = 0; i < g_RouteCount; i++) {
-            for (int j = 0; j < g_Routes[i].url_count; j++) {
-                if (url == g_Routes[i].urls[j]) {
-                    temp_rt.url_count = 1;
-                    copy_limited(temp_rt.name, sizeof(temp_rt.name), g_Routes[i].name);
-                    copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), g_Routes[i].urls[j]);
-                    if (target != "clash" && (_stricmp(g_Routes[i].user_agents[j], "ClashMeta") == 0 || _stricmp(g_Routes[i].user_agents[j], "Happ") == 0)) {
-                        copy_limited(temp_rt.user_agents[0], sizeof(temp_rt.user_agents[0]), "Happ/3.23.0");
-                    } else {
-                        copy_limited(temp_rt.user_agents[0], sizeof(temp_rt.user_agents[0]), g_Routes[i].user_agents[j]);
-                    }
-                    temp_rt.use_hwid = g_Routes[i].use_hwid;
-                    matched_route = true;
-                    break;
-                }
-            }
-            if (matched_route) break;
-        }
     }
-    
-    if (temp_rt.url_count == 0) {
+    if (source_rt == &temp_rt) {
         copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
         temp_rt.url_count = 1;
     }
-    temp_rt.use_hwid = 0;
 
-    char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
-    
-    std::string out_payload;
-    std::string raw_clash_proxies;
-    std::string raw_clash_names;
-    std::vector<Proxy> all_proxies;
-    std::vector<Rule> all_rules;
-    int success_count = 0;
-    
-    SubMetadata meta = {0};
-    bool have_preferred_meta = false;
-    
-    for (int i = 0; i < temp_rt.url_count; i++) {
-        SubMetadata temp_meta = {0};
-        int blen = fetch_url(&temp_rt, body, BODY_CAP, NULL, i,
-                             &temp_meta);
-        if (blen >= 0) {
-            success_count++;
-            merge_metadata_for_target(meta, temp_meta, preferred_metadata_source(target, temp_rt, i, temp_meta), have_preferred_meta);
-            std::string payload(body, blen);
-            if (target == "clash" && payload.find("proxies:") != std::string::npos) {
-                // Extract Native Clash YAML proxies
-                size_t p_start = payload.find("proxies:");
-                if (p_start != std::string::npos) {
-                    p_start += 8; // skip 'proxies:'
-                    if (p_start < payload.length() && payload[p_start] == '\r') p_start++;
-                    if (p_start < payload.length() && payload[p_start] == '\n') p_start++;
-                    
-                    size_t next_section = std::string::npos;
-                    size_t search_pos = p_start;
-                    while ((search_pos = payload.find('\n', search_pos)) != std::string::npos) {
-                        search_pos++;
-                        if (search_pos < payload.length() && isalpha((unsigned char)payload[search_pos])) {
-                            next_section = search_pos;
-                            break;
-                        }
-                    }
-                    size_t p_end = (next_section != std::string::npos) ? next_section : payload.length();
-                    
-                    std::string block = payload.substr(p_start, p_end - p_start);
-                    
-                    std::string filtered_block;
-                    size_t search_start = 0;
-                    while (true) {
-                        size_t name_pos = block.find("- name:", search_start);
-                        if (name_pos == std::string::npos) break;
-                        
-                        size_t node_start = name_pos;
-                        while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
-                            node_start--;
-                        }
-                        
-                        size_t next_name_pos = block.find("- name:", name_pos + 7);
-                        size_t next_node_start = block.length();
-                        if (next_name_pos != std::string::npos) {
-                            next_node_start = next_name_pos;
-                            while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
-                                next_node_start--;
-                            }
-                        }
-                        
-                        std::string node_str = block.substr(node_start, next_node_start - node_start);
-                        
-                        filtered_block += node_str;
-                        
-                        size_t n_pos = node_str.find("- name:");
-                        size_t end_line = node_str.find('\n', n_pos);
-                        if (end_line == std::string::npos) end_line = node_str.length();
-                        size_t val_start = node_str.find_first_not_of(" \t", n_pos + 7);
-                        if (val_start != std::string::npos && val_start < end_line) {
-                            size_t val_end = end_line - 1;
-                            while (val_end >= val_start && (node_str[val_end] == ' ' || node_str[val_end] == '\t' || node_str[val_end] == '\r' || node_str[val_end] == '\n')) {
-                                val_end--;
-                            }
-                            if (val_start <= val_end) {
-                                std::string raw_name = node_str.substr(val_start, val_end - val_start + 1);
-                                if (raw_name.length() >= 2 && ((raw_name.front() == '"' && raw_name.back() == '"') ||
-                                    (raw_name.front() == '\'' && raw_name.back() == '\''))) {
-                                    raw_name = raw_name.substr(1, raw_name.length() - 2);
-                                }
-                                raw_clash_names += "      - \"" + raw_name + "\"\n";
-                            }
-                        }
-                        
-                        search_start = next_name_pos;
-                    }
-                    raw_clash_proxies += filtered_block;
-                }
-            } else {
-                std::string decoded;
-                size_t first_char = payload.find_first_not_of(" \t\r\n");
-                if (first_char != std::string::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
-                    decoded = payload;
-                } else {
-                    decoded = (payload.find("://") != std::string::npos) ? payload : base64_decode(payload);
-                }
-                auto p = parse_proxies(decoded);
-                all_proxies.insert(all_proxies.end(), p.begin(), p.end());
-                auto r = parse_xray_rules(decoded);
-                all_rules.insert(all_rules.end(), r.begin(), r.end());
-            }
-        }
-    }
-
-    if (success_count > 0) {
-        if (target == "clash") {
-            out_payload = gen_clash(all_proxies, all_rules);
-            if (!raw_clash_proxies.empty()) {
-                while (!raw_clash_proxies.empty() && isspace((unsigned char)raw_clash_proxies.back())) {
-                    raw_clash_proxies.pop_back();
-                }
-                raw_clash_proxies += "\n";
-                
-                size_t pg = out_payload.find("proxy-groups:");
-                if (pg != std::string::npos) {
-                    out_payload.insert(pg, raw_clash_proxies);
-                    
-                    size_t auto_grp = out_payload.find("  - name: Auto\n    type: url-test");
-                    if (auto_grp != std::string::npos) {
-                        out_payload.insert(auto_grp, raw_clash_names);
-                    }
-                    
-                    size_t rules = out_payload.find("rules:");
-                    if (rules != std::string::npos) {
-                        out_payload.insert(rules, raw_clash_names);
-                    }
-                }
-            }
-        } else if (target == "singbox" || target == "sing-box") {
-            out_payload = gen_singbox(all_proxies, "android", all_rules);
-        } else if (target == "singbox-pc" || target == "sing-box-pc") {
-            out_payload = gen_singbox(all_proxies, "pc", all_rules);
-        } else {
-            out_payload = gen_v2ray(all_proxies);
-        }
-
-        apply_route_name(meta, temp_rt.name);
-        std::string extra_hdrs = metadata_headers(meta);
-
-        std::string hdr = "HTTP/1.1 200 OK\r\n"
-                          "Content-Type: " + std::string(converted_content_type(target)) + "\r\n"
-                          "Content-Length: " + std::to_string(out_payload.length()) + "\r\n"
-                          + extra_hdrs +
-                          "Connection: close\r\n\r\n";
-        send(c, hdr.c_str(), (int)hdr.length(), 0);
-        send(c, out_payload.c_str(), (int)out_payload.length(), 0);
-        logm("  [SUBCONV] target=%s -> 200 OK (%zu bytes)\n", target.c_str(), out_payload.length());
-    } else {
-        std::string e = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n";
-        send(c, e.c_str(), (int)e.length(), 0);
-        logm("  [SUBCONV] target=%s -> 502 Fail\n", target.c_str());
-    }
-    HeapFree(GetProcessHeap(), 0, body);
+    serve_converted_or_raw(c, source_rt, target, 25500);
 }
+
 void handle_client(SOCKET c, const Route *rt) {
     DWORD tv = CL_TIMEOUT;
     setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
@@ -567,75 +555,25 @@ void handle_client(SOCKET c, const Route *rt) {
         return;
     }
 
-    if (!rt->is_convert) {
-        std::string auto_target = target_from_user_agent(request_header(req, "User-Agent"));
-        if (!auto_target.empty()) {
-            std::string sub_req = "GET /sub?target=" + auto_target +
-                                  "&url=http%3A%2F%2F127.0.0.1%3A" +
-                                  std::to_string(rt->local_port) +
-                                  " HTTP/1.1\r\n\r\n";
-            logm("  [AUTO] Port %d UA target=%s\n", rt->local_port, auto_target.c_str());
-            handle_subconverter(c, sub_req);
-            shutdown(c, SD_SEND);
-            closesocket(c);
-            return;
-        }
-    }
-
     logm("  [REQ] Port %d\n", rt->local_port);
 
-    char *body = (char *)HeapAlloc(GetProcessHeap(), 0, BODY_CAP);
-    if (!body) {
-        const char *e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOOM";
-        send(c, e, (int)strlen(e), 0);
-        closesocket(c);
-        return;
-    }
-
-    std::string final_payload;
-    int success_count = 0;
-    
-    SubMetadata meta = {0};
-
-    for (int i = 0; i < rt->url_count; i++) {
-        SubMetadata temp_meta = {0};
-        int blen = fetch_url(rt, body, BODY_CAP, NULL, i,
-                             &temp_meta);
-        if (blen > 0) {
-            success_count++;
-            merge_metadata(meta, temp_meta);
-            if (!final_payload.empty()) final_payload += "\n";
-            final_payload.append(body, blen);
+    if (rt->is_convert) {
+        const Route *source_rt = rt;
+        for (int i = 0; i < g_RouteCount; i++) {
+            if (!g_Routes[i].is_convert && !g_Routes[i].is_subconverter && g_Routes[i].local_port == rt->base_port) {
+                source_rt = &g_Routes[i];
+                break;
+            }
         }
-    }
-
-    apply_route_name(meta, rt->name);
-    std::string extra_hdrs = metadata_headers(meta);
-
-    if (success_count > 0) {
-        std::string content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
-        std::string hdr = "HTTP/1.1 200 OK\r\n"
-                          "Content-Type: " + content_type + "\r\n"
-                          "Content-Length: " + std::to_string(final_payload.length()) + "\r\n"
-                          + extra_hdrs +
-                          "Connection: close\r\n\r\n";
-        send(c, hdr.c_str(), (int)hdr.length(), 0);
-        send(c, final_payload.c_str(), (int)final_payload.length(), 0);
-        logm("  [OK] 200  %zu bytes\n\n", final_payload.length());
+        serve_converted_or_raw(c, source_rt, rt->target, rt->local_port);
     } else {
-        int el = snprintf(body, BODY_CAP, "upstream error");
-        char err_hdr[256];
-        int hl = snprintf(err_hdr, sizeof(err_hdr),
-            "HTTP/1.1 502 Bad Gateway\r\n"
-            "Content-Type: text/plain\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: close\r\n\r\n", el);
-        send(c, err_hdr, hl, 0);
-        send(c, body, el, 0);
-        logm("  [FAIL] 502  upstream failed\n\n");
+        std::string auto_target = target_from_user_agent(request_header(req, "User-Agent"));
+        if (!auto_target.empty()) {
+            logm("  [AUTO] Port %d UA target=%s\n", rt->local_port, auto_target.c_str());
+        }
+        serve_converted_or_raw(c, rt, auto_target, rt->local_port);
     }
 
-    HeapFree(GetProcessHeap(), 0, body);
     shutdown(c, SD_SEND);
     closesocket(c);
 }

@@ -1,8 +1,9 @@
-name: Build and Release
+name: Build, Test and Release
 
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
@@ -15,34 +16,55 @@ on:
 
 jobs:
   build:
+    name: Build & Test (Windows Release)
     runs-on: windows-latest
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Configure CMake
-      run: cmake -B build -S .
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Build
-      run: cmake --build build --config Release -j 4
-      
-    - name: Run Tests
-      working-directory: build
-      run: ctest -C Release --output-on-failure
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sub_bridge-windows
-        path: build/Release/sub_bridge.exe
+      - name: Configure CMake
+        run: cmake --preset release
 
-    - name: Create Release
-      if: github.event.inputs.release == 'true' && github.event_name == 'workflow_dispatch'
-      uses: softprops/action-gh-release@v3
-      with:
-        files: build/Release/sub_bridge.exe
-        tag_name: "v${{ github.run_number }}"
-        name: "Release v${{ github.run_number }}"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Project
+        run: cmake --build --preset release
+
+      - name: Run CTest Suite
+        run: ctest --preset release --output-on-failure
+
+      - name: Prepare Package Directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package
+          Copy-Item build/release/sub_bridge.exe -Destination package/
+          Copy-Item config.ini.example -Destination package/
+          Compress-Archive -Path package/* -DestinationPath sub_bridge-windows-x64.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub_bridge-windows-x64
+          path: sub_bridge-windows-x64.zip
+
+      - name: Publish GitHub Release
+        if: (startsWith(github.ref, 'refs/tags/v') || (github.event.inputs.release == 'true' && github.event_name == 'workflow_dispatch'))
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sub_bridge-windows-x64.zip
+            build/release/sub_bridge.exe
+            config.ini.example
+          tag_name: ${{ github.ref_name || format('v{0}', github.run_number) }}
+          name: Release ${{ github.ref_name || format('v{0}', github.run_number) }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

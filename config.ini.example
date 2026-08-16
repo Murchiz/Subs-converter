@@ -1,0 +1,54 @@
+# ==============================================================================
+# Subscription Bridge & Subconverter Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# [Device] (Optional)
+# Configure or override device fingerprinting parameters.
+# If omitted, hardware details are automatically detected from the Windows registry.
+# ------------------------------------------------------------------------------
+[Device]
+# hwid  = 00000000-0000-0000-0000-000000000000
+# os    = Windows
+# ver   = 10.0.22631
+# model = Custom PC
+
+# ------------------------------------------------------------------------------
+# [Sub_<Identifier>]
+# Define a subscription endpoint. You can define multiple [Sub_...] sections.
+# ------------------------------------------------------------------------------
+[Sub_Main]
+# Display name for this profile / route
+name = MyProxyBundle
+
+# Base listening port on 127.0.0.1
+port = 25501
+
+# Enable/disable device HWID header injection when fetching upstream URLs (true/false)
+hwid = false
+
+# Upstream subscription URLs (up to 8 links per section: link1..link8 or link)
+link1 = https://example.com/api/v1/client/subscribe?token=example_token_1
+# link2 = https://another-provider.com/sub/vless
+
+# Custom User-Agent per upstream URL (optional)
+user_agent1 = v2rayng
+# user_agent2 = clash-meta
+
+# Automatically spin up converted endpoints on subsequent ports.
+# E.g. port=25501 with converts=clash, singbox will listen on:
+#   - http://127.0.0.1:25501 (Raw / Merged V2Ray Base64)
+#   - http://127.0.0.1:25502 (Clash / Mihomo YAML)
+#   - http://127.0.0.1:25503 (Sing-Box Android JSON)
+# Supported targets: clash, singbox, singbox-pc
+converts = clash, singbox, singbox-pc
+
+# ------------------------------------------------------------------------------
+# Additional Subscription Example
+# ------------------------------------------------------------------------------
+#[Sub_Backup]
+#name = BackupNodes
+#port = 25510
+#hwid = false
+#link1 = https://backup-provider.com/subscribe
+#converts = clash
