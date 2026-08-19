@@ -29,6 +29,19 @@
       }
     },
     {
+      "name": "ci",
+      "displayName": "CI (Fast Incremental & Cached)",
+      "description": "Fast CI build preset with compiler caching (sccache), incremental linking (/INCREMENTAL), embedded debug info (/Z7), and multiprocessor compilation (/MP).",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "sccache",
+        "CMAKE_C_COMPILER_LAUNCHER": "sccache",
+        "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /Oi /Ot /Oy /GF /Gy /DNDEBUG /fp:fast /MP /Z7",
+        "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/INCREMENTAL"
+      }
+    },
+    {
       "name": "debug",
       "displayName": "Debug",
       "description": "Debug build with diagnostics and debug symbols.",
@@ -46,6 +59,11 @@
       "configurePreset": "release"
     },
     {
+      "name": "ci",
+      "displayName": "Build CI",
+      "configurePreset": "ci"
+    },
+    {
       "name": "debug",
       "displayName": "Build Debug",
       "configurePreset": "debug"
@@ -56,6 +74,14 @@
       "name": "release",
       "displayName": "Test Release",
       "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "Test CI",
+      "configurePreset": "ci",
       "output": {
         "outputOnFailure": true
       }
