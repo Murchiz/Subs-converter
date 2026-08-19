@@ -8,15 +8,23 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
     inputs:
-      release:
-        description: 'Create a GitHub Release'
+      version:
+        description: 'Release version (e.g. 1.0.0 or v1.0.0)'
+        required: false
+        type: string
+        default: ''
+      create_release:
+        description: 'Publish GitHub Release'
         required: true
         type: boolean
-        default: false
+        default: true
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: Build & Test (Windows Release)
+  ci:
+    name: CI Build & Test
     runs-on: windows-latest
 
     env:
@@ -37,10 +45,10 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Configure CMake
+      - name: Configure CMake (CI Preset)
         run: cmake --preset ci
 
-      - name: Build Project
+      - name: Build Project (CI Preset)
         run: cmake --build --preset ci
 
       - name: Run CTest Suite
@@ -50,31 +58,85 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+  release:
+    name: Production Release
+    runs-on: windows-latest
+    needs: [ci]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Determine Version & Tag
+        id: version_info
+        shell: pwsh
+        run: |
+          $refName = "${{ github.ref_name }}"
+          $inputVersion = "${{ inputs.version }}".Trim()
+
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+              $cleanVer = $refName.TrimStart('vV')
+              $tag = $refName
+          } elseif ($inputVersion -ne "") {
+              $cleanVer = $inputVersion.TrimStart('vV')
+              $tag = "v$cleanVer"
+          } else {
+              $cleanVer = "1.0.${{ github.run_number }}"
+              $tag = "v$cleanVer"
+          }
+
+          Write-Host "Configured Version: $cleanVer"
+          Write-Host "Configured Tag: $tag"
+          "PROJECT_VERSION=$cleanVer" >> $env:GITHUB_ENV
+          "TAG_NAME=$tag" >> $env:GITHUB_ENV
+          "project_version=$cleanVer" >> $env:GITHUB_OUTPUT
+          "tag_name=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Configure CMake (Release Preset)
+        run: cmake --preset release -D "PROJECT_VERSION=${{ env.PROJECT_VERSION }}"
+
+      - name: Build Project (Release Preset)
+        run: cmake --build --preset release
+
+      - name: Run CTest Suite (Release Preset)
+        run: ctest --preset release --output-on-failure
+
       - name: Prepare Package Directory
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package
-          Copy-Item build/ci/sub_bridge.exe -Destination package/
+          Copy-Item build/release/sub_bridge.exe -Destination package/
           Copy-Item config.ini.example -Destination package/
           Compress-Archive -Path package/* -DestinationPath sub_bridge-windows-x64.zip
 
-      - name: Upload Artifact
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v7
         with:
           name: sub_bridge-windows-x64
           path: sub_bridge-windows-x64.zip
 
       - name: Publish GitHub Release
-        if: (startsWith(github.ref, 'refs/tags/v') || (github.event.inputs.release == 'true' && github.event_name == 'workflow_dispatch'))
         uses: softprops/action-gh-release@v3
         with:
           files: |
             sub_bridge-windows-x64.zip
-            build/ci/sub_bridge.exe
+            build/release/sub_bridge.exe
             config.ini.example
-          tag_name: ${{ github.ref_name || format('v{0}', github.run_number) }}
-          name: Release ${{ github.ref_name || format('v{0}', github.run_number) }}
+          tag_name: ${{ env.TAG_NAME }}
+          name: Release ${{ env.TAG_NAME }}
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

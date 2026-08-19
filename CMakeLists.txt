@@ -1,5 +1,20 @@
 cmake_minimum_required(VERSION 3.10)
-project(SubBridge VERSION 1.0)
+if(DEFINED PROJECT_VERSION)
+    set(SUB_BRIDGE_VER ${PROJECT_VERSION})
+else()
+    set(SUB_BRIDGE_VER "1.0.0")
+endif()
+
+project(SubBridge
+    VERSION ${SUB_BRIDGE_VER}
+    DESCRIPTION "SubBridge - Local Proxy Subscription Converter & Aggregator"
+    LANGUAGES CXX RC
+)
+
+# Project Metadata
+set(PROJECT_COMPANY_NAME "Murchiz" CACHE STRING "Company/Author Name")
+set(PROJECT_COPYRIGHT "Copyright (c) 2026 Murchiz. Licensed under MIT." CACHE STRING "Copyright notice")
+set(PROJECT_DESCRIPTION "${PROJECT_DESCRIPTION}" CACHE STRING "Application description")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -21,6 +36,15 @@ set(SOURCES
     src/server.cpp
     src/main.cpp
 )
+
+if(WIN32)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/res/version.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/version.rc
+        @ONLY
+    )
+    list(APPEND SOURCES ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
+endif()
 
 add_executable(sub_bridge ${SOURCES})
 
