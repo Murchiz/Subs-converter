@@ -67,7 +67,7 @@ inline int sscanf_s_wrapper(const char *buffer, const char *format, ...) noexcep
     return result;
 }
 
-inline errno_t fopen_s_wrapper(FILE **pf, const char *filename, const char *mode) noexcept {
+inline int fopen_s_wrapper(FILE **pf, const char *filename, const char *mode) noexcept {
 #ifdef _MSC_VER
     return fopen_s(pf, filename, mode);
 #else

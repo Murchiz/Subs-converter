@@ -192,7 +192,7 @@ void load_config() {
             if (converts[0]) {
                 int c_idx = 1;
                 char *context = nullptr;
-                char *tok = strtok_s(converts, ", \t", &context);
+                char *tok = safe_crt::strtok_s_wrapper(converts, ", \t", &context);
                 while (tok) {
                     if (g_RouteCount >= 64) break;
                     Route *rc = &g_Routes[g_RouteCount++];
@@ -205,7 +205,7 @@ void load_config() {
                     safe_strncpy(rc->name, r->name);
                     rc->use_hwid = 0;
                     c_idx++;
-                    tok = strtok_s(nullptr, ", \t", &context);
+                    tok = safe_crt::strtok_s_wrapper(nullptr, ", \t", &context);
                 }
             }
         }
@@ -488,10 +488,10 @@ void do_install() {
 void do_uninstall() {
     if (has_systemd()) {
         std::print("Stopping and removing systemd service... ");
-        system("systemctl stop subbridge >/dev/null 2>&1");
-        system("systemctl disable subbridge >/dev/null 2>&1");
+        [[maybe_unused]] int r1 = system("systemctl stop subbridge >/dev/null 2>&1");
+        [[maybe_unused]] int r2 = system("systemctl disable subbridge >/dev/null 2>&1");
         unlink("/etc/systemd/system/subbridge.service");
-        system("systemctl daemon-reload >/dev/null 2>&1");
+        [[maybe_unused]] int r3 = system("systemctl daemon-reload >/dev/null 2>&1");
         std::println("OK.");
     } else {
         std::string pid_file = get_pid_file_path();
