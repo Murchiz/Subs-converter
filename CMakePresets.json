@@ -23,22 +23,16 @@
       "description": "Optimized release build with maximum speed, Link-Time Code Generation (LTCG/GL), and binary stripping/folding.",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /Oi /Ot /Oy /GL /GF /Gy /Gw /DNDEBUG /fp:fast",
-        "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
       "name": "ci",
       "displayName": "CI (Fast Incremental & Cached)",
-      "description": "Fast CI build preset with compiler caching (sccache), incremental linking (/INCREMENTAL), embedded debug info (/Z7), and multiprocessor compilation (/MP).",
+      "description": "Fast CI build preset.",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_COMPILER_LAUNCHER": "sccache",
-        "CMAKE_C_COMPILER_LAUNCHER": "sccache",
-        "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /Oi /Ot /Oy /GF /Gy /DNDEBUG /fp:fast /MP /Z7",
-        "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/INCREMENTAL"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
@@ -47,8 +41,7 @@
       "description": "Debug build with diagnostics and debug symbols.",
       "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_FLAGS_DEBUG": "/Zi /Od /RTC1 /MDd /D_DEBUG"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     }
   ],

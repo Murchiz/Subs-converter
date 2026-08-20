@@ -40,6 +40,25 @@ inline bool istarts_with(std::string_view str, std::string_view prefix) noexcept
 
 } // namespace
 
+#ifndef SUB_BRIDGE_VERSION
+#define SUB_BRIDGE_VERSION "1.0.0"
+#endif
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <signal.h>
+#endif
+
+void print_version() {
+    std::println("SubBridge Version: {}", SUB_BRIDGE_VERSION);
+    std::println("Build Time: {} {}", __DATE__, __TIME__);
+    std::println("Repository: https://github.com/Murchiz/Subs-converter");
+}
+
+#ifdef _WIN32
 int reg_sz(HKEY root, const char *sub, const char *name, char *buf, DWORD cap) {
     HKEY hk = nullptr;
     DWORD type = 0, sz = cap;
@@ -80,6 +99,57 @@ void dev_gather() {
         safe_strncpy(g_Dev.model, "Windows PC");
     }
 }
+#else
+void dev_gather() {
+    std::memset(&g_Dev, 0, sizeof(g_Dev));
+    safe_strncpy(g_Dev.os, "Linux");
+
+    // Read machine-id for HWID
+    std::ifstream mid_file("/etc/machine-id");
+    if (!mid_file.is_open()) mid_file.open("/var/lib/dbus/machine-id");
+    if (mid_file.is_open()) {
+        std::string mid;
+        if (std::getline(mid_file, mid)) {
+            mid = std::string(trim_sv(mid));
+            safe_strncpy(g_Dev.hwid, mid.c_str());
+        }
+    }
+    if (!g_Dev.hwid[0]) safe_strncpy(g_Dev.hwid, "unknown");
+
+    // Read OS info from /etc/os-release
+    std::ifstream os_file("/etc/os-release");
+    std::string os_name = "Linux";
+    std::string os_ver = "unknown";
+    if (os_file.is_open()) {
+        std::string line;
+        while (std::getline(os_file, line)) {
+            std::string_view sv = trim_sv(line);
+            if (sv.starts_with("PRETTY_NAME=")) {
+                std::string_view val = sv.substr(12);
+                if (val.size() >= 2 && val.front() == '"' && val.back() == '"') val = val.substr(1, val.size() - 2);
+                os_name = std::string(val);
+            } else if (sv.starts_with("VERSION_ID=")) {
+                std::string_view val = sv.substr(11);
+                if (val.size() >= 2 && val.front() == '"' && val.back() == '"') val = val.substr(1, val.size() - 2);
+                os_ver = std::string(val);
+            }
+        }
+    }
+    safe_strncpy(g_Dev.os, os_name.c_str());
+    safe_strncpy(g_Dev.ver, os_ver.c_str());
+
+    // Read Model from /sys/devices/virtual/dmi/id/product_name
+    std::ifstream dmi_file("/sys/devices/virtual/dmi/id/product_name");
+    if (dmi_file.is_open()) {
+        std::string prod;
+        if (std::getline(dmi_file, prod)) {
+            prod = std::string(trim_sv(prod));
+            safe_strncpy(g_Dev.model, prod.c_str());
+        }
+    }
+    if (!g_Dev.model[0]) safe_strncpy(g_Dev.model, "Linux Device");
+}
+#endif
 
 void load_config() {
     fs::path cfg_path = fs::path(g_ExeDir) / "config.ini";
@@ -188,6 +258,7 @@ void load_config() {
     commit_sub();
 }
 
+#ifdef _WIN32
 void svc_report(DWORD st, DWORD err, DWORD hint) {
     static DWORD ck = 1;
     g_Svc.dwCurrentState = st;
@@ -267,6 +338,34 @@ void do_uninstall() {
     CloseServiceHandle(scm);
 }
 
+void do_restart() {
+    SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) { std::println("ERROR: run as Administrator."); return; }
+
+    SC_HANDLE s = OpenServiceA(scm, SVC_NAME, SERVICE_STOP | SERVICE_START | SERVICE_QUERY_STATUS);
+    if (s) {
+        SERVICE_STATUS ss{};
+        std::print("Stopping service... ");
+        if (ControlService(s, SERVICE_CONTROL_STOP, &ss)) {
+            for (int i = 0; i < 30; i++) {
+                if (!QueryServiceStatus(s, &ss) || ss.dwCurrentState == SERVICE_STOPPED) break;
+                Sleep(200);
+            }
+        }
+        std::println("OK.");
+        std::print("Starting service... ");
+        if (StartServiceA(s, 0, nullptr)) {
+            std::println("OK.");
+        } else {
+            std::println("err {} (start manually: sc start {})", GetLastError(), SVC_NAME);
+        }
+        CloseServiceHandle(s);
+    } else {
+        std::println("Service not found.");
+    }
+    CloseServiceHandle(scm);
+}
+
 BOOL WINAPI con_ctrl(DWORD c) {
     if (c == CTRL_C_EVENT || c == CTRL_BREAK_EVENT) {
         SetEvent(g_Stop);
@@ -288,10 +387,176 @@ void run_console() {
     server_loop();
     std::println("\nStopped.");
 }
+#else
+bool has_systemd() {
+    struct stat st{};
+    return (stat("/run/systemd/system", &st) == 0);
+}
+
+std::string get_self_exe_path() {
+    char buf[PATH_MAX]{};
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len != -1) {
+        buf[len] = '\0';
+        return std::string(buf);
+    }
+    return "";
+}
+
+std::string get_pid_file_path() {
+    return "/tmp/subbridge.pid";
+}
+
+void do_install() {
+    if (has_systemd()) {
+        std::string exe_path = get_self_exe_path();
+        if (exe_path.empty()) {
+            std::println("ERROR: Cannot determine executable path.");
+            return;
+        }
+        fs::path exe_p(exe_path);
+        std::string working_dir = exe_p.parent_path().string();
+
+        std::string service_content = std::format(
+            "[Unit]\n"
+            "Description=Subscription Converter Bridge\n"
+            "After=network.target\n\n"
+            "[Service]\n"
+            "Type=simple\n"
+            "WorkingDirectory={}\n"
+            "ExecStart={} --console\n"
+            "Restart=always\n"
+            "RestartSec=3\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n",
+            working_dir, exe_path
+        );
+
+        std::ofstream unit_file("/etc/systemd/system/subbridge.service");
+        if (!unit_file.is_open()) {
+            std::println("ERROR: Cannot write /etc/systemd/system/subbridge.service (run with sudo).");
+            return;
+        }
+        unit_file << service_content;
+        unit_file.close();
+
+        std::print("Enabling and starting systemd service... ");
+        int r = system("systemctl daemon-reload && systemctl enable subbridge && systemctl start subbridge");
+        if (r == 0) {
+            std::println("OK.");
+        } else {
+            std::println("Failed. Run manually: sudo systemctl start subbridge");
+        }
+    } else {
+        std::string pid_file = get_pid_file_path();
+        std::ifstream pf(pid_file);
+        if (pf.is_open()) {
+            pid_t old_pid = 0;
+            if (pf >> old_pid && old_pid > 0 && kill(old_pid, 0) == 0) {
+                std::println("Service is already running (PID {}).", old_pid);
+                return;
+            }
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            std::println("ERROR: Fork failed.");
+            return;
+        }
+        if (pid > 0) {
+            std::ofstream out_pf(pid_file);
+            if (out_pf.is_open()) {
+                out_pf << pid << "\n";
+            }
+            std::println("Started SubBridge daemon (PID {}).", pid);
+            return;
+        }
+
+        setsid();
+        umask(0);
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+
+        g_IsCon = 0;
+        server_loop();
+        unlink(pid_file.c_str());
+        exit(0);
+    }
+}
+
+void do_uninstall() {
+    if (has_systemd()) {
+        std::print("Stopping and removing systemd service... ");
+        system("systemctl stop subbridge >/dev/null 2>&1");
+        system("systemctl disable subbridge >/dev/null 2>&1");
+        unlink("/etc/systemd/system/subbridge.service");
+        system("systemctl daemon-reload >/dev/null 2>&1");
+        std::println("OK.");
+    } else {
+        std::string pid_file = get_pid_file_path();
+        std::ifstream pf(pid_file);
+        if (!pf.is_open()) {
+            std::println("Service PID file not found.");
+            return;
+        }
+        pid_t pid = 0;
+        if (pf >> pid && pid > 0) {
+            kill(pid, SIGTERM);
+            for (int i = 0; i < 30; i++) {
+                if (kill(pid, 0) != 0) break;
+                usleep(100000);
+            }
+            unlink(pid_file.c_str());
+            std::println("Stopped SubBridge daemon (PID {}).", pid);
+        } else {
+            std::println("Invalid PID file.");
+            unlink(pid_file.c_str());
+        }
+    }
+}
+
+void do_restart() {
+    if (has_systemd()) {
+        std::print("Restarting systemd service... ");
+        int r = system("systemctl restart subbridge");
+        if (r == 0) {
+            std::println("OK.");
+        } else {
+            std::println("Failed. Run manually: sudo systemctl restart subbridge");
+        }
+    } else {
+        do_uninstall();
+        usleep(300000);
+        do_install();
+    }
+}
+
+void sig_handler(int sig) {
+    if (sig == SIGINT || sig == SIGTERM) {
+        g_Stop = 1;
+    }
+}
+
+void run_console() {
+    g_IsCon = 1;
+    g_Stop = 0;
+    signal(SIGINT, sig_handler);
+    signal(SIGTERM, sig_handler);
+
+    std::println("\n  SubBridge & Subconverter - console mode");
+    std::println("  HWID:   {}", g_Dev.hwid);
+    std::println("  OS:     {} {}", g_Dev.os, g_Dev.ver);
+    std::println("  Model:  {}\n", g_Dev.model);
+
+    server_loop();
+    std::println("\nStopped.");
+}
+#endif
 
 void run_convert(int argc, char **argv) {
     if (argc < 4) {
-        std::println("Usage: sub_bridge -convert <target> <url> [output_file]");
+        std::println("Usage: sub_bridge --convert <target> <url> [output_file]");
         std::println("Targets: clash, singbox, singbox-pc, xray, xray-one");
         return;
     }
@@ -303,7 +568,7 @@ void run_convert(int argc, char **argv) {
     copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
     temp_rt.url_count = 1;
 
-    char *body = static_cast<char *>(HeapAlloc(GetProcessHeap(), 0, BODY_CAP));
+    char *body = static_cast<char *>(mem_alloc(BODY_CAP));
 
     std::string out_payload;
     std::string raw_clash_proxies;
@@ -452,39 +717,90 @@ void run_convert(int argc, char **argv) {
     } else {
         std::println("Error fetching URL");
     }
-    HeapFree(GetProcessHeap(), 0, body);
+    mem_free(body);
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
     GetModuleFileNameA(nullptr, g_ExeDir, MAX_PATH);
     char *last_slash = strrchr(g_ExeDir, '\\');
     if (last_slash) *last_slash = '\0';
+#else
+    std::string exe_path = get_self_exe_path();
+    if (!exe_path.empty()) {
+        safe_strncpy(g_ExeDir, fs::path(exe_path).parent_path().string().c_str());
+    } else {
+        safe_strncpy(g_ExeDir, ".");
+    }
+#endif
 
     dev_gather();
     load_config();
 
     if (argc > 1) {
         std::string_view a = argv[1];
-        if (iequals(a, "-install") || iequals(a, "/install")) { do_install(); return 0; }
-        if (iequals(a, "-uninstall") || iequals(a, "/uninstall") || iequals(a, "-remove")) { do_uninstall(); return 0; }
-        if (iequals(a, "-console") || iequals(a, "/console") || iequals(a, "-c")) { run_console(); return 0; }
-        if (iequals(a, "-convert")) { run_convert(argc, argv); return 0; }
+        if (iequals(a, "--version") || iequals(a, "-version") || iequals(a, "-v") || iequals(a, "/version")) {
+            print_version();
+            return 0;
+        }
+        if (iequals(a, "--install") || iequals(a, "-install") || iequals(a, "/install")) {
+            do_install();
+            return 0;
+        }
+        if (iequals(a, "--uninstall") || iequals(a, "-uninstall") || iequals(a, "/uninstall") ||
+            iequals(a, "--remove") || iequals(a, "-remove")) {
+            do_uninstall();
+            return 0;
+        }
+        if (iequals(a, "--restart") || iequals(a, "-restart") || iequals(a, "/restart")) {
+            do_restart();
+            return 0;
+        }
+        if (iequals(a, "--console") || iequals(a, "-console") || iequals(a, "/console") || iequals(a, "-c")) {
+            run_console();
+            return 0;
+        }
+        if (iequals(a, "--convert") || iequals(a, "-convert") || iequals(a, "/convert")) {
+            run_convert(argc, argv);
+            return 0;
+        }
+
+        fs::path prog_path(argv[0]);
+        std::string prog_name = prog_path.filename().string();
+        if (prog_name.empty()) prog_name = "sub_bridge";
+#ifndef _WIN32
+        std::string prog_cmd = "./" + prog_name;
+#else
+        std::string prog_cmd = ".\\" + prog_name;
+#endif
 
         std::println("Subscription Bridge & Embedded Subconverter\n");
-        std::println("  {} -install                    install + start service", argv[0]);
-        std::println("  {} -uninstall                  stop + remove service", argv[0]);
-        std::println("  {} -console                    run in foreground", argv[0]);
-        std::println("  {} -convert <target> <url> [f] static file convert", argv[0]);
+        std::println("  {} --install                      install + start service", prog_cmd);
+        std::println("  {} --uninstall                    stop + remove service", prog_cmd);
+        std::println("  {} --restart                      restart service", prog_cmd);
+        std::println("  {} --console                      run in foreground", prog_cmd);
+        std::println("  {} --convert <target> <url> [file] static file convert", prog_cmd);
+        std::println("  {} --version                      show version information", prog_cmd);
         return 1;
     }
 
+#ifdef _WIN32
     SERVICE_TABLE_ENTRYA tbl[] = { { const_cast<char *>(SVC_NAME), svc_main }, { nullptr, nullptr } };
     if (!StartServiceCtrlDispatcherA(tbl)) {
         if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
             std::println("Not launched by SCM.");
-            std::println("  Use  -console   to run interactively");
-            std::println("  Use  -install   to install as a service");
+            std::println("  Use  --console   to run interactively");
+            std::println("  Use  --install   to install as a service");
+            std::println("  Use  --restart   to restart the service");
         }
     }
+#else
+    std::println("SubBridge - Local Subscription Bridge & Subconverter\n");
+    std::println("  Use  --console   to run interactively");
+    std::println("  Use  --install   to install as a background service");
+    std::println("  Use  --restart   to restart the service");
+    std::println("  Use  --version   to show version");
+#endif
     return 0;
 }
+

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/Language-C%2B%2B23-00599C.svg)](https://en.cppreference.com/w/cpp/23)
 
-**SubBridge** is a high-performance, lightweight local proxy subscription converter, aggregator, and bridge written in C++ using native Windows APIs (`WinHTTP`, `Winsock2`).
+**SubBridge** is a high-performance, lightweight local proxy subscription converter, aggregator, and bridge written in C++ for Windows and Linux.
 
 It parses and normalizes diverse proxy subscription formats and protocols (VLESS, VMess, Trojan, Shadowsocks, Hysteria 1/2, TUIC, Clash YAML, Sing-box JSON, V2Ray Base64) with zero external heavy dependencies, low memory footprint, and sub-millisecond conversion latency.
 
@@ -19,27 +19,32 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
 - **Subscription Merging**: Aggregate up to 8 upstream subscription links per route into a single unified endpoint.
 - **Auto-Spawned Conversion Ports**: Specify `converts = clash, singbox, singbox-pc` to automatically spin up dedicated converted endpoints on consecutive local ports.
 - **Subconverter Compatible API**: Built-in HTTP endpoint on port `25500` compatible with standard subconverter clients (`http://127.0.0.1:25500/sub?target=clash&url=...`).
-- **Device Fingerprinting & Spoofing**: Automatic hardware ID (`MachineGuid`) and OS telemetry gathering with optional per-route spoofing and custom `User-Agent` headers.
+- **Device Fingerprinting & Spoofing**: Automatic hardware ID (`MachineGuid` / `machine-id`) and OS telemetry gathering with optional per-route spoofing and custom `User-Agent` headers.
 - **Flexible Execution Modes**:
-  - Run interactively in terminal (`-console`)
-  - Run in the background as a native Windows Service (`-install`, `-uninstall`)
-  - Static one-shot file converter via CLI (`-convert`)
+  - Run interactively in terminal (`--console`)
+  - Run in the background as a Windows Service or Linux systemd daemon (`--install`, `--uninstall`, `--restart`)
+  - Static one-shot file converter via CLI (`--convert`)
+  - Version & build inspection (`--version`)
 
 ---
 
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- **Visual Studio 2022 / Build Tools** (MSVC C++ compiler)
 - **CMake** (3.20 or newer)
 - **Ninja** (recommended)
+- **C++23 Compiler**:
+  - **Windows**: Visual Studio 2022 / MSVC
+  - **Linux**: GCC 14+ or Clang 18+
+- **Linux Build Dependencies**:
+  - `libcurl` development package (e.g. `sudo apt install -y libcurl4-openssl-dev ninja-build`)
 - **Python 3** (optional, for YAML tests)
 
 ### Build with CMake Presets (Recommended)
 
-Configure, compile with full optimizations (`/O2`, `/GL`, `/LTCG`), and run tests:
+Configure, compile with full optimizations, and run tests:
 
-```powershell
+```bash
 # 1. Configure optimized release preset
 cmake --preset release
 
@@ -50,7 +55,7 @@ cmake --build --preset release
 ctest --preset release
 ```
 
-The optimized executable will be located in `build/release/sub_bridge.exe`.
+The optimized executable will be located in `build/release/sub_bridge.exe` (Windows) or `build/release/sub_bridge` (Linux).
 
 ---
 
@@ -58,8 +63,12 @@ The optimized executable will be located in `build/release/sub_bridge.exe`.
 
 SubBridge looks for `config.ini` in the same directory as the executable. Copy [`config.ini.example`](config.ini.example) to get started:
 
-```powershell
+```bash
+# Windows
 Copy-Item config.ini.example config.ini
+
+# Linux
+cp config.ini.example config.ini
 ```
 
 ### Configuration Structure
@@ -98,33 +107,44 @@ converts = clash, singbox, singbox-pc, xray, xray-one
 
 ### 1. Interactive / Console Mode
 Run in the foreground with live logging:
-```powershell
-.\sub_bridge.exe -console
+```bash
+./sub_bridge --console
 ```
 
-### 2. Windows Service Mode
-Install and register SubBridge as an automatic background service:
-```powershell
-# Install & start service (run as Administrator)
-.\sub_bridge.exe -install
+### 2. Service Management Mode
+Install, start, restart, or remove SubBridge as a background service:
+```bash
+# Windows (run as Administrator)
+.\sub_bridge.exe --install
+.\sub_bridge.exe --restart
+.\sub_bridge.exe --uninstall
 
-# Stop & uninstall service (run as Administrator)
-.\sub_bridge.exe -uninstall
+# Linux (run with sudo)
+sudo ./sub_bridge --install
+sudo ./sub_bridge --restart
+sudo ./sub_bridge --uninstall
 ```
+*Note: On Linux, SubBridge automatically registers a `systemd` service unit if `systemd` is present, or falls back to native daemonization otherwise.*
 
 ### 3. One-Shot File Converter
 Convert any subscription URL or file directly into a configuration file:
-```powershell
-# Syntax: .\sub_bridge.exe -convert <target> <url_or_file> [output_file]
+```bash
+# Syntax: ./sub_bridge --convert <target> <url_or_file> [output_file]
 # Targets: clash, singbox, singbox-pc, xray, xray-one, v2ray
 
-.\sub_bridge.exe -convert clash "https://example.com/sub" clash_config.yaml
-.\sub_bridge.exe -convert singbox "https://example.com/sub" singbox_config.json
-.\sub_bridge.exe -convert xray "https://example.com/sub" xray_links.txt
-.\sub_bridge.exe -convert xray-one "https://example.com/sub" xray_config.json
+./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml
+./sub_bridge --convert singbox "https://example.com/sub" singbox_config.json
+./sub_bridge --convert xray "https://example.com/sub" xray_links.txt
+./sub_bridge --convert xray-one "https://example.com/sub" xray_config.json
 ```
 
-### 4. Subconverter HTTP Endpoint
+### 4. Check Version
+Display version metadata, build time, and repository info:
+```bash
+./sub_bridge --version
+```
+
+### 5. Subconverter HTTP Endpoint
 When SubBridge is running, connect your proxy client directly to the built-in subconverter port (`25500`):
 ```text
 http://127.0.0.1:25500/sub?target=clash&url=http://127.0.0.1:25501
@@ -136,7 +156,7 @@ http://127.0.0.1:25500/sub?target=clash&url=http://127.0.0.1:25501
 
 Run all unit and integration tests:
 
-```powershell
+```bash
 ctest --preset release --output-on-failure
 ```
 
@@ -150,3 +170,4 @@ Tests include:
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).
+

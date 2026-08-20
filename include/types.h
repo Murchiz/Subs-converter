@@ -1,13 +1,35 @@
 #pragma once
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#endif
 #include <winsock2.h>
+#include <windows.h>
 #include <winhttp.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <sys/select.h>
+#include <signal.h>
+#include <climits>
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+#define MAX_PATH PATH_MAX
+typedef int SOCKET;
+inline constexpr int INVALID_SOCKET = -1;
+inline constexpr int SOCKET_ERROR = -1;
+typedef unsigned int DWORD;
+#endif
+
 #include <string>
 #include <string_view>
 #include <vector>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <format>
 
 inline constexpr const char* SVC_NAME = "SubBridge";
@@ -15,8 +37,8 @@ inline constexpr const char* SVC_DISPLAY = "Subscription Converter Bridge";
 inline constexpr const wchar_t* UA_WIDE = L"Happ/3.23.0";
 
 inline constexpr std::size_t BODY_CAP = 2048 * 1024;
-inline constexpr DWORD UP_TIMEOUT = 15000;
-inline constexpr DWORD CL_TIMEOUT = 5000;
+inline constexpr uint32_t UP_TIMEOUT = 15000;
+inline constexpr uint32_t CL_TIMEOUT = 5000;
 
 struct DevInfo {
     char hwid[128]{};
@@ -89,9 +111,13 @@ struct Proxy {
 extern Route g_Routes[64];
 extern int g_RouteCount;
 extern DevInfo g_Dev;
+#ifdef _WIN32
 extern SERVICE_STATUS g_Svc;
 extern SERVICE_STATUS_HANDLE g_SvcH;
 extern HANDLE g_Stop;
+#else
+extern volatile sig_atomic_t g_Stop;
+#endif
 extern int g_IsCon;
 extern char g_ExeDir[MAX_PATH];
 
@@ -103,4 +129,5 @@ inline void logm_fmt(std::format_string<Args...> fmt, Args&&... args) {
     std::string s = std::format(fmt, std::forward<Args>(args)...);
     logm("%s", s.c_str());
 }
+
 

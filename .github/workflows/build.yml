@@ -24,23 +24,52 @@ permissions:
 
 jobs:
   ci:
-    name: CI Build & Test
-    runs-on: windows-latest
-
-    env:
-      SCCACHE_GHA_ENABLED: "true"
+    name: CI Build & Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Set up MSVC environment
+        if: runner.os == 'Windows'
         uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
           arch: x64
 
-      - name: Set up sccache
+      - name: Set up sccache (Windows)
+        if: runner.os == 'Windows'
         uses: mozilla/sccache-action@v0.0.11
+
+      - name: Configure Windows Compiler Launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
+          "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+          "CMAKE_C_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev ninja-build ccache
+
+      - name: Set up ccache (Linux)
+        if: runner.os == 'Linux'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ci
+
+      - name: Configure Linux Compiler Launcher
+        if: runner.os == 'Linux'
+        run: |
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -56,13 +85,21 @@ jobs:
       - name: Run CTest Suite
         run: ctest --preset ci --output-on-failure
 
-      - name: Show sccache stats
-        if: always()
+      - name: Show sccache stats (Windows)
+        if: always() && runner.os == 'Windows'
         run: sccache --show-stats
 
-  release:
-    name: Production Release
-    runs-on: windows-latest
+      - name: Show ccache stats (Linux)
+        if: always() && runner.os == 'Linux'
+        run: ccache -s
+
+  release-build:
+    name: Build Release Binary (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     needs: [ci]
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
 
@@ -73,9 +110,16 @@ jobs:
           fetch-depth: 0
 
       - name: Set up MSVC environment
+        if: runner.os == 'Windows'
         uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
           arch: x64
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev ninja-build
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -104,8 +148,6 @@ jobs:
           Write-Host "Configured Tag: $tag"
           "PROJECT_VERSION=$cleanVer" >> $env:GITHUB_ENV
           "TAG_NAME=$tag" >> $env:GITHUB_ENV
-          "project_version=$cleanVer" >> $env:GITHUB_OUTPUT
-          "tag_name=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Configure CMake (Release Preset)
         run: cmake --preset release -D "PROJECT_VERSION=${{ env.PROJECT_VERSION }}"
@@ -116,7 +158,8 @@ jobs:
       - name: Run CTest Suite (Release Preset)
         run: ctest --preset release --output-on-failure
 
-      - name: Prepare Package Directory
+      - name: Prepare Windows Package
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package
@@ -124,19 +167,68 @@ jobs:
           Copy-Item config.ini.example -Destination package/
           Compress-Archive -Path package/* -DestinationPath sub_bridge-windows-x64.zip
 
-      - name: Upload Build Artifact
+      - name: Prepare Linux Package
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p package
+          cp build/release/sub_bridge package/
+          cp config.ini.example package/
+          tar -czf sub_bridge-linux-x64.tar.gz -C package .
+
+      - name: Upload Artifact Windows
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: sub_bridge-windows-x64
           path: sub_bridge-windows-x64.zip
+
+      - name: Upload Artifact Linux
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sub_bridge-linux-x64
+          path: sub_bridge-linux-x64.tar.gz
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [release-build]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: sub_bridge-windows-x64
+
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: sub_bridge-linux-x64
+
+      - name: Determine Tag Name
+        id: tag_calc
+        shell: pwsh
+        run: |
+          $refName = "${{ github.ref_name }}"
+          $inputVersion = "${{ inputs.version }}".Trim()
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+              $tag = $refName
+          } elseif ($inputVersion -ne "") {
+              $cleanVer = $inputVersion.TrimStart('vV')
+              $tag = "v$cleanVer"
+          } else {
+              $tag = "v1.0.${{ github.run_number }}"
+          }
+          "TAG_NAME=$tag" >> $env:GITHUB_ENV
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             sub_bridge-windows-x64.zip
-            build/release/sub_bridge.exe
-            config.ini.example
+            sub_bridge-linux-x64.tar.gz
           tag_name: ${{ env.TAG_NAME }}
           name: Release ${{ env.TAG_NAME }}
           draft: false
@@ -144,3 +236,4 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

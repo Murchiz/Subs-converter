@@ -5,11 +5,19 @@
 #include "safe_crt.h"
 #include <thread>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cctype>
 #include <format>
 #include <string_view>
 #include <algorithm>
+#include <memory>
+
+#ifndef _WIN32
+#include <curl/curl.h>
+#define closesocket close
+#define SD_SEND SHUT_WR
+#endif
 
 void copy_limited(char *dst, int cap, const char *src) {
     if (!dst || cap <= 0) return;
@@ -22,6 +30,7 @@ void copy_limited(char *dst, int cap, const char *src) {
 
 namespace {
 
+#ifdef _WIN32
 struct WinHttpHandleCloser {
     void operator()(HINTERNET h) const noexcept {
         if (h) WinHttpCloseHandle(h);
@@ -59,6 +68,63 @@ bool query_content_type(HINTERNET req, char *out, int cap) {
     out[cap - 1] = '\0';
     return out[0] != '\0';
 }
+#else
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+    size_t capacity;
+};
+
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    auto *mem = static_cast<MemoryStruct *>(userp);
+
+    if (mem->size + realsize >= mem->capacity) {
+        realsize = (mem->capacity > mem->size + 1) ? (mem->capacity - mem->size - 1) : 0;
+    }
+    if (realsize > 0) {
+        std::memcpy(&(mem->memory[mem->size]), contents, realsize);
+        mem->size += realsize;
+        mem->memory[mem->size] = 0;
+    }
+    return size * nmemb;
+}
+
+static size_t HeaderCallback(char *buffer, size_t size, size_t nitems, void *userdata) {
+    size_t total = size * nitems;
+    auto *meta = static_cast<SubMetadata *>(userdata);
+    if (!meta) return total;
+
+    std::string_view line(buffer, total);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+        line.remove_suffix(1);
+    }
+    size_t colon = line.find(':');
+    if (colon != std::string_view::npos) {
+        std::string_view name = line.substr(0, colon);
+        std::string_view val = line.substr(colon + 1);
+        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.remove_prefix(1);
+        std::string val_str(val);
+
+        auto ci_eq = [](std::string_view a, std::string_view b) {
+            return std::ranges::equal(a, b, [](char x, char y) {
+                return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+            });
+        };
+
+        if (ci_eq(name, "Subscription-Userinfo")) copy_limited(meta->userinfo, sizeof(meta->userinfo), val_str.c_str());
+        else if (ci_eq(name, "Profile-Update-Interval")) copy_limited(meta->interval, sizeof(meta->interval), val_str.c_str());
+        else if (ci_eq(name, "Content-Disposition")) copy_limited(meta->disposition, sizeof(meta->disposition), val_str.c_str());
+        else if (ci_eq(name, "Profile-Title")) copy_limited(meta->profile_title, sizeof(meta->profile_title), val_str.c_str());
+        else if (ci_eq(name, "Announce")) copy_limited(meta->announce, sizeof(meta->announce), val_str.c_str());
+        else if (ci_eq(name, "Profile-Web-Page-Url")) copy_limited(meta->profile_web_page_url, sizeof(meta->profile_web_page_url), val_str.c_str());
+        else if (ci_eq(name, "Support-Url")) copy_limited(meta->support_url, sizeof(meta->support_url), val_str.c_str());
+        else if (ci_eq(name, "Subscription-Refill-Date")) copy_limited(meta->refill_date, sizeof(meta->refill_date), val_str.c_str());
+        else if (ci_eq(name, "Content-Type")) copy_limited(meta->content_type, sizeof(meta->content_type), val_str.c_str());
+    }
+    return total;
+}
+#endif
 
 void merge_metadata(SubMetadata& dst, const SubMetadata& src) {
     if (!dst.userinfo[0] && src.userinfo[0]) copy_limited(dst.userinfo, sizeof(dst.userinfo), src.userinfo);
@@ -202,6 +268,7 @@ void merge_metadata_for_target(SubMetadata& dst, const SubMetadata& src, bool pr
 
 } // namespace
 
+#ifdef _WIN32
 int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int url_index,
               SubMetadata *out_meta) {
     int total = -1;
@@ -318,9 +385,90 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
     buf[total] = '\0';
     return total;
 }
+#else
+int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int url_index,
+              SubMetadata *out_meta) {
+    if (out_meta) std::memset(out_meta, 0, sizeof(*out_meta));
+    char full_url[4096]{};
+    copy_limited(full_url, sizeof(full_url), rt->urls[url_index]);
+
+    std::string_view url_sv(full_url);
+    if (!url_sv.starts_with("http://") && !url_sv.starts_with("https://")) {
+        FILE *f = nullptr;
+        if (safe_crt::fopen_s_wrapper(&f, full_url, "rb") == 0 && f) {
+            int n = static_cast<int>(fread(buf, 1, cap - 1, f));
+            fclose(f);
+            if (n >= 0) {
+                buf[n] = '\0';
+                return n;
+            }
+        }
+        return -1;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return -1;
+
+    MemoryStruct chunk{ buf, 0, static_cast<size_t>(cap) };
+    buf[0] = '\0';
+
+    curl_easy_setopt(curl, CURLOPT_URL, full_url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, static_cast<void *>(&chunk));
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(UP_TIMEOUT));
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(UP_TIMEOUT));
+
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+
+    std::string ua_str;
+    if (custom_ua) {
+        std::wstring ws(custom_ua);
+        ua_str = std::string(ws.begin(), ws.end());
+    } else if (rt && rt->user_agents[url_index][0]) {
+        ua_str = rt->user_agents[url_index];
+    } else {
+        ua_str = "Happ/3.23.0";
+    }
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, ua_str.c_str());
+
+    struct curl_slist *headers = nullptr;
+    if (rt && rt->use_hwid) {
+        headers = curl_slist_append(headers, std::format("x-hwid: {}", g_Dev.hwid).c_str());
+        headers = curl_slist_append(headers, std::format("x-device-os: {}", g_Dev.os).c_str());
+        headers = curl_slist_append(headers, std::format("x-ver-os: {}", g_Dev.ver).c_str());
+        headers = curl_slist_append(headers, std::format("x-device-model: {}", g_Dev.model).c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
+
+    if (out_meta) {
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, static_cast<void *>(out_meta));
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+    if (headers) curl_slist_free_all(headers);
+
+    if (res != CURLE_OK) {
+        curl_easy_cleanup(curl);
+        return -1;
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_cleanup(curl);
+
+    if (http_code != 200) {
+        return -static_cast<int>(http_code);
+    }
+
+    return static_cast<int>(chunk.size);
+}
+#endif
 
 static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::string& target, int log_port) {
-    char *body = static_cast<char *>(HeapAlloc(GetProcessHeap(), 0, BODY_CAP));
+    char *body = static_cast<char *>(mem_alloc(BODY_CAP));
     if (!body) {
         constexpr std::string_view e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOOM";
         send(c, e.data(), static_cast<int>(e.length()), 0);
@@ -506,7 +654,7 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
         send(c, e.data(), static_cast<int>(e.length()), 0);
         logm("  [FAIL] Port %d -> 502 Upstream Failed\n\n", log_port);
     }
-    HeapFree(GetProcessHeap(), 0, body);
+    mem_free(body);
 }
 
 void handle_subconverter(SOCKET c, std::string_view req) {
@@ -565,9 +713,17 @@ void handle_subconverter(SOCKET c, std::string_view req) {
 }
 
 void handle_client(SOCKET c, const Route *rt) {
+#ifdef _WIN32
     DWORD tv = CL_TIMEOUT;
     setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&tv), sizeof(tv));
     setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&tv), sizeof(tv));
+#else
+    struct timeval tv;
+    tv.tv_sec = CL_TIMEOUT / 1000;
+    tv.tv_usec = (CL_TIMEOUT % 1000) * 1000;
+    setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
 
     char req[2048]{};
     int n = recv(c, req, sizeof(req) - 1, 0);
@@ -635,8 +791,10 @@ SOCKET make_listener(int port) {
 }
 
 void server_loop() {
+#ifdef _WIN32
     WSADATA wsa{};
     WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
 
     int active_sockets = 0;
     for (int i = 0; i < g_RouteCount; i++) {
@@ -653,12 +811,18 @@ void server_loop() {
 
     if (active_sockets == 0) {
         logm("No valid ports to listen on.\n");
+#ifdef _WIN32
         WSACleanup();
+#endif
         return;
     }
 
     for (;;) {
+#ifdef _WIN32
         if (WaitForSingleObject(g_Stop, 0) == WAIT_OBJECT_0) break;
+#else
+        if (g_Stop) break;
+#endif
 
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -695,5 +859,8 @@ void server_loop() {
             closesocket(g_Routes[i].listen_sock);
         }
     }
+#ifdef _WIN32
     WSACleanup();
+#endif
 }
+

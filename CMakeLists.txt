@@ -8,8 +8,12 @@ endif()
 project(SubBridge
     VERSION ${SUB_BRIDGE_VER}
     DESCRIPTION "SubBridge - Local Proxy Subscription Converter & Aggregator"
-    LANGUAGES CXX RC
+    LANGUAGES CXX
 )
+
+if(WIN32)
+    enable_language(RC)
+endif()
 
 # Project Metadata
 set(PROJECT_COMPANY_NAME "Murchiz" CACHE STRING "Company/Author Name")
@@ -22,11 +26,27 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable secure CRT template overloads (must be before any standard header includes)
 add_compile_definitions(_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES=1)
+add_compile_definitions(SUB_BRIDGE_VERSION="${SUB_BRIDGE_VER}")
 
 include_directories(include)
 
-# Windows specific libraries
-link_libraries(ws2_32 winhttp advapi32)
+if(WIN32)
+    # Windows specific libraries
+    link_libraries(ws2_32 winhttp advapi32)
+    if(MSVC)
+        add_compile_options("$<$<CONFIG:Release>:/O2;/Ob2;/Oi;/Ot;/Oy;/GL;/GF;/Gy;/Gw;/fp:fast>")
+        add_link_options("$<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF;/INCREMENTAL:NO>")
+        add_compile_options("$<$<CONFIG:Debug>:/Zi;/Od;/RTC1;/MDd>")
+    endif()
+else()
+    find_package(CURL REQUIRED)
+    link_libraries(CURL::libcurl)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        add_compile_options("$<$<CONFIG:Release>:-O3;-flto;-fPIE>")
+        add_link_options("$<$<CONFIG:Release>:-flto;-pie>")
+        add_compile_options("$<$<CONFIG:Debug>:-g;-O0>")
+    endif()
+endif()
 
 set(SOURCES
     src/globals.cpp
