@@ -57,7 +57,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev ninja-build ccache
+          sudo apt-get install -y gcc-15 g++-15 libcurl4-openssl-dev ninja-build ccache
+          echo "CC=gcc-15" >> $GITHUB_ENV
+          echo "CXX=g++-15" >> $GITHUB_ENV
 
       - name: Set up ccache (Linux)
         if: runner.os == 'Linux'
@@ -119,7 +121,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev ninja-build
+          sudo apt-get install -y gcc-15 g++-15 libcurl4-openssl-dev ninja-build
+          echo "CC=gcc-15" >> $GITHUB_ENV
+          echo "CXX=g++-15" >> $GITHUB_ENV
 
       - name: Set up Python
         uses: actions/setup-python@v7

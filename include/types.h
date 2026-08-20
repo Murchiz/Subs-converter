@@ -32,6 +32,44 @@ typedef unsigned int DWORD;
 #include <cstdint>
 #include <format>
 
+#if __has_include(<print>)
+#include <print>
+#else
+#include <iostream>
+#include <cstdio>
+#include <utility>
+
+namespace std {
+
+template <typename... Args>
+inline void print(std::format_string<Args...> fmt, Args&&... args) {
+    std::cout << std::format(fmt, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline void print(std::FILE* stream, std::format_string<Args...> fmt, Args&&... args) {
+    std::string s = std::format(fmt, std::forward<Args>(args)...);
+    std::fwrite(s.data(), 1, s.size(), stream);
+}
+
+template <typename... Args>
+inline void println(std::format_string<Args...> fmt, Args&&... args) {
+    std::cout << std::format(fmt, std::forward<Args>(args)...) << '\n';
+}
+
+template <typename... Args>
+inline void println(std::FILE* stream, std::format_string<Args...> fmt, Args&&... args) {
+    std::string s = std::format(fmt, std::forward<Args>(args)...) + '\n';
+    std::fwrite(s.data(), 1, s.size(), stream);
+}
+
+inline void println() {
+    std::cout << '\n';
+}
+
+} // namespace std
+#endif
+
 inline constexpr const char* SVC_NAME = "SubBridge";
 inline constexpr const char* SVC_DISPLAY = "Subscription Converter Bridge";
 inline constexpr const wchar_t* UA_WIDE = L"Happ/3.23.0";

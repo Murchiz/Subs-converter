@@ -6,7 +6,6 @@
 #include <cassert>
 #include <cstring>
 #include <filesystem>
-#include <print>
 #include <string_view>
 
 namespace fs = std::filesystem;
