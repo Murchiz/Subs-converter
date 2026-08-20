@@ -31,6 +31,11 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
 
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      CMAKE_CXX_COMPILER_LAUNCHER: "sccache"
+      CMAKE_C_COMPILER_LAUNCHER: "sccache"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -41,37 +46,16 @@ jobs:
         with:
           arch: x64
 
-      - name: Set up sccache (Windows)
-        if: runner.os == 'Windows'
-        uses: mozilla/sccache-action@v0.0.11
-
-      - name: Configure Windows Compiler Launcher
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
-          "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
-          "CMAKE_C_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
-
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-14 g++-14 libcurl4-openssl-dev ninja-build ccache
+          sudo apt-get install -y gcc-14 g++-14 libcurl4-openssl-dev ninja-build
           echo "CC=gcc-14" >> $GITHUB_ENV
           echo "CXX=g++-14" >> $GITHUB_ENV
 
-      - name: Set up ccache (Linux)
-        if: runner.os == 'Linux'
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ runner.os }}-ci
-
-      - name: Configure Linux Compiler Launcher
-        if: runner.os == 'Linux'
-        run: |
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
-          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
+      - name: Set up sccache
+        uses: mozilla/sccache-action@v0.0.11
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -87,13 +71,9 @@ jobs:
       - name: Run CTest Suite
         run: ctest --preset ci --output-on-failure
 
-      - name: Show sccache stats (Windows)
-        if: always() && runner.os == 'Windows'
+      - name: Show sccache stats
+        if: always()
         run: sccache --show-stats
-
-      - name: Show ccache stats (Linux)
-        if: always() && runner.os == 'Linux'
-        run: ccache -s
 
   release-build:
     name: Build Release Binary (${{ matrix.os }})
