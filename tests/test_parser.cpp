@@ -182,16 +182,13 @@ void test_clash_to_singbox_and_xray() {
     std::vector<Rule> rules = parse_xray_rules(clash_yaml);
     assert(rules.size() >= 2);
 
-    // Singbox generation
     std::string sb = gen_singbox(proxies, "android", rules);
-    assert(!sb.contains("\"type\": \"https\"")); // NO "type": "https"
-    assert(sb.contains("\"type\": \"http\""));   // Translated to "http" with TLS
+    assert(!sb.contains("\"type\": \"https\""));
+    assert(sb.contains("\"type\": \"http\""));
     assert(sb.contains("\"type\": \"shadowsocks\""));
     assert(sb.contains("\"method\": \"aes-256-gcm\""));
     assert(sb.contains("\"public_key\": \"example-public-key\""));
 
-
-    // Xray generation
     std::string xray = gen_xray(proxies, "My Profile", rules);
     assert(xray.contains("\"routing\""));
     assert(xray.contains("\"inbounds\""));
@@ -204,47 +201,58 @@ void test_clash_to_singbox_and_xray() {
 }
 
 void test_xray_grpc_roundtrip() {
-    std::string filename;
-    for (const auto& path : {"reference/original.json", "../reference/original.json", "../../reference/original.json"}) {
-        if (fs::exists(path)) {
-            filename = path;
-            break;
-        }
-    }
-    if (!filename.empty()) {
-        std::ifstream file(filename);
-        if (file.is_open()) {
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            std::string content = buffer.str();
+    std::string_view grpc_json = 
+        "{\n"
+        "  \"remarks\": \"Sample-GRPC\",\n"
+        "  \"outbounds\": [\n"
+        "    {\n"
+        "      \"protocol\": \"vless\",\n"
+        "      \"settings\": {\n"
+        "        \"vnext\": [{\n"
+        "          \"address\": \"example.com\",\n"
+        "          \"port\": 8443,\n"
+        "          \"users\": [{ \"id\": \"00000000-0000-0000-0000-000000000000\", \"encryption\": \"none\" }]\n"
+        "        }]\n"
+        "      },\n"
+        "      \"streamSettings\": {\n"
+        "        \"network\": \"grpc\",\n"
+        "        \"security\": \"reality\",\n"
+        "        \"grpcSettings\": { \"serviceName\": \"grpc-service-test\" },\n"
+        "        \"realitySettings\": {\n"
+        "          \"serverName\": \"grpc.example.com\",\n"
+        "          \"publicKey\": \"dummy-public-key\",\n"
+        "          \"shortId\": \"0123456789abcdef\"\n"
+        "        }\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n";
 
-            std::vector<Proxy> proxies = parse_proxies(content);
-            assert(proxies.size() == 1);
-            assert(std::string_view(proxies[0].protocol) == "vless");
-            assert(std::string_view(proxies[0].type) == "grpc");
-            assert(std::string_view(proxies[0].path) == "qwen-services-8443");
-            assert(std::string_view(proxies[0].sni) == "chat.qwen.ai");
-            assert(std::string_view(proxies[0].pbk) == "sm4JzfsMkmDUreMh_2BQQu8IZIrWYja9qgF2mxFvIUo");
-            assert(std::string_view(proxies[0].sid) == "BDD9BC8C2A0F70D0");
+    std::vector<Proxy> proxies = parse_proxies(grpc_json);
+    assert(proxies.size() == 1);
+    assert(std::string_view(proxies[0].protocol) == "vless");
+    assert(std::string_view(proxies[0].type) == "grpc");
+    assert(std::string_view(proxies[0].path) == "grpc-service-test");
+    assert(std::string_view(proxies[0].sni) == "grpc.example.com");
+    assert(std::string_view(proxies[0].pbk) == "dummy-public-key");
+    assert(std::string_view(proxies[0].sid) == "0123456789abcdef");
 
-            std::vector<Rule> rules = parse_xray_rules(content);
-            std::string clash_yaml = gen_clash(proxies, rules);
-            assert(clash_yaml.contains("grpc-service-name: qwen-services-8443"));
+    std::vector<Rule> rules = parse_xray_rules(grpc_json);
+    std::string clash_yaml = gen_clash(proxies, rules);
+    assert(clash_yaml.contains("grpc-service-name: grpc-service-test"));
 
-            std::vector<Proxy> re_proxies = parse_proxies(clash_yaml);
-            assert(re_proxies.size() == 1);
-            assert(std::string_view(re_proxies[0].path) == "qwen-services-8443");
-            assert(std::string_view(re_proxies[0].type) == "grpc");
+    std::vector<Proxy> re_proxies = parse_proxies(clash_yaml);
+    assert(re_proxies.size() == 1);
+    assert(std::string_view(re_proxies[0].path) == "grpc-service-test");
+    assert(std::string_view(re_proxies[0].type) == "grpc");
 
-            std::string re_xray = gen_xray(re_proxies, "🇪🇪Эстония 2 test", rules);
-            assert(re_xray.contains("\"serviceName\": \"qwen-services-8443\""));
+    std::string re_xray = gen_xray(re_proxies, "GRPC Test Profile", rules);
+    assert(re_xray.contains("\"serviceName\": \"grpc-service-test\""));
 
-            std::string re_sb = gen_singbox(re_proxies, "android", rules);
-            assert(re_sb.contains("\"service_name\": \"qwen-services-8443\""));
+    std::string re_sb = gen_singbox(re_proxies, "android", rules);
+    assert(re_sb.contains("\"service_name\": \"grpc-service-test\""));
 
-            std::println("test_xray_grpc_roundtrip passed.");
-        }
-    }
+    std::println("test_xray_grpc_roundtrip passed.");
 }
 
 void test_multi_xray_json_subscription() {
@@ -295,6 +303,119 @@ void test_multi_xray_json_subscription() {
     std::println("test_multi_xray_json_subscription passed.");
 }
 
+void test_balancers_and_xray_jsons() {
+    std::string_view synthetic_sub = 
+        "[\n"
+        "  {\n"
+        "    \"remarks\": \"Auto Europe\",\n"
+        "    \"routing\": {\n"
+        "      \"balancers\": [{\n"
+        "        \"tag\": \"balancer-eu\",\n"
+        "        \"selector\": [\"proxy-2\", \"proxy-3\"],\n"
+        "        \"strategy\": { \"type\": \"leastPing\" }\n"
+        "      }],\n"
+        "      \"rules\": [\n"
+        "        { \"type\": \"field\", \"protocol\": [\"bittorrent\"], \"outboundTag\": \"block\" },\n"
+        "        { \"type\": \"field\", \"domain\": [\"geosite:category-ru\"], \"outboundTag\": \"direct\" },\n"
+        "        { \"type\": \"field\", \"ip\": [\"geoip:ru\"], \"outboundTag\": \"direct\" },\n"
+        "        { \"type\": \"field\", \"balancerTag\": \"balancer-eu\", \"network\": \"tcp,udp\" }\n"
+        "      ]\n"
+        "    },\n"
+        "    \"burstObservatory\": {\n"
+        "      \"subjectSelector\": [\"proxy-\"],\n"
+        "      \"interval\": \"1m\"\n"
+        "    },\n"
+        "    \"outbounds\": [\n"
+        "      {\n"
+        "        \"tag\": \"proxy-2\",\n"
+        "        \"protocol\": \"vless\",\n"
+        "        \"settings\": { \"vnext\": [{ \"address\": \"192.0.2.1\", \"port\": 443, \"users\": [{ \"id\": \"00000000-0000-0000-0000-000000000001\" }] }] },\n"
+        "        \"streamSettings\": { \"network\": \"tcp\", \"security\": \"reality\", \"realitySettings\": { \"serverName\": \"example.com\", \"publicKey\": \"example-key-1\" } }\n"
+        "      },\n"
+        "      {\n"
+        "        \"tag\": \"proxy-3\",\n"
+        "        \"protocol\": \"vless\",\n"
+        "        \"settings\": { \"vnext\": [{ \"address\": \"192.0.2.2\", \"port\": 443, \"users\": [{ \"id\": \"00000000-0000-0000-0000-000000000002\" }] }] },\n"
+        "        \"streamSettings\": { \"network\": \"tcp\", \"security\": \"reality\", \"realitySettings\": { \"serverName\": \"example.com\", \"publicKey\": \"example-key-2\" } }\n"
+        "      }\n"
+        "    ]\n"
+        "  },\n"
+        "  {\n"
+        "    \"remarks\": \"Server Germany\",\n"
+        "    \"outbounds\": [\n"
+        "      {\n"
+        "        \"tag\": \"proxy\",\n"
+        "        \"protocol\": \"vless\",\n"
+        "        \"settings\": { \"vnext\": [{ \"address\": \"192.0.2.1\", \"port\": 443, \"users\": [{ \"id\": \"00000000-0000-0000-0000-000000000001\" }] }] },\n"
+        "        \"streamSettings\": { \"network\": \"tcp\", \"security\": \"reality\", \"realitySettings\": { \"serverName\": \"example.com\", \"publicKey\": \"example-key-1\" } }\n"
+        "      }\n"
+        "    ]\n"
+        "  },\n"
+        "  {\n"
+        "    \"remarks\": \"Server Netherlands\",\n"
+        "    \"outbounds\": [\n"
+        "      {\n"
+        "        \"tag\": \"proxy\",\n"
+        "        \"protocol\": \"vless\",\n"
+        "        \"settings\": { \"vnext\": [{ \"address\": \"192.0.2.2\", \"port\": 443, \"users\": [{ \"id\": \"00000000-0000-0000-0000-000000000002\" }] }] },\n"
+        "        \"streamSettings\": { \"network\": \"tcp\", \"security\": \"reality\", \"realitySettings\": { \"serverName\": \"example.com\", \"publicKey\": \"example-key-2\" } }\n"
+        "      }\n"
+        "    ]\n"
+        "  }\n"
+        "]\n";
+
+    std::vector<Proxy> proxies;
+    std::vector<Balancer> balancers;
+    std::vector<Rule> rules;
+    parse_subscription(synthetic_sub, proxies, balancers, rules);
+
+    assert(!balancers.empty());
+    assert(balancers.size() == 1);
+    assert(std::string_view(balancers[0].name) == "Auto Europe");
+    assert(balancers[0].proxies.size() == 2);
+    assert(balancers[0].proxies[0] == "Server Germany");
+    assert(balancers[0].proxies[1] == "Server Netherlands");
+    assert(proxies.size() == 2);
+
+    for (const auto& p : proxies) {
+        std::string_view name = p.name;
+        assert(name != "proxy-2");
+        assert(name != "proxy-3");
+    }
+
+    std::string clash_yaml = gen_clash(proxies, rules, balancers, 0);
+    assert(!clash_yaml.contains("- name: proxy-2"));
+    assert(!clash_yaml.contains("- name: proxy-3"));
+    assert(clash_yaml.contains("Auto Europe"));
+    assert(!clash_yaml.contains("- name: Auto\n    type: url-test"));
+
+    std::string clash_yaml_forced = gen_clash(proxies, rules, balancers, 1);
+    assert(clash_yaml_forced.contains("- name: Auto\n    type: url-test"));
+
+    std::string sb_json = gen_singbox(proxies, "android", rules, balancers, 0);
+    assert(!sb_json.contains("\"tag\": \"proxy-2\""));
+    assert(!sb_json.contains("\"tag\": \"proxy-3\""));
+    assert(!sb_json.contains("xhttp"));
+    assert(!sb_json.contains("\"tag\": \"Auto\""));
+    assert(!sb_json.contains("geoip:ru/128"));
+    assert(sb_json.contains("\"rule_set\":"));
+    assert(sb_json.contains("\"http_clients\": [{\"tag\":\"default\"}]"));
+    assert(sb_json.contains("\"default_http_client\":\"default\""));
+    assert(!sb_json.contains("download_detour"));
+
+    std::string sb_json_forced = gen_singbox(proxies, "android", rules, balancers, 1);
+    assert(sb_json_forced.contains("\"tag\": \"Auto\""));
+
+    std::string xray_jsons = gen_xray_jsons(proxies, balancers, rules);
+    assert(xray_jsons.starts_with("[\n"));
+    assert(xray_jsons.ends_with("]\n"));
+    assert(xray_jsons.contains("\"balancers\":"));
+    assert(xray_jsons.contains("\"burstObservatory\":"));
+    assert(xray_jsons.contains("Auto Europe"));
+
+    std::println("test_balancers_and_xray_jsons passed.");
+}
+
 int main() {
     std::println("Running tests...");
     test_base64();
@@ -303,6 +424,7 @@ int main() {
     test_clash_to_singbox_and_xray();
     test_xray_grpc_roundtrip();
     test_multi_xray_json_subscription();
+    test_balancers_and_xray_jsons();
     std::println("All tests passed successfully.");
     return 0;
 }

@@ -14,17 +14,29 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
 
 - **Multi-Protocol & Multi-Format Parsing**:
   - Protocols: `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria://`, `hysteria2://`, `tuic://`, `wireguard://`
-  - Targets: Clash / Mihomo YAML, Sing-Box (Android & PC) JSON, V2Ray Base64, Raw URIs
+  - Targets:
+    - `clash`: Clash / Mihomo YAML
+    - `singbox-android`: Sing-box JSON (Mobile / Android)
+    - `singbox-pc`: Sing-box JSON (Desktop / PC with SOCKS & Mixed inbounds)
+    - `xray`: Base64-encoded V2Ray / Xray link list
+    - `xray-one`: Single consolidated Xray JSON configuration
+    - `xray-jsons`: Array of standalone Xray JSON configurations (`[...]`) containing balancers with `burstObservatory` and individual node configs
+    - `v2ray`: Base64-encoded V2Ray link list
   - Full routing rule extraction and conversion between Xray/Sing-box rules and Clash rule sets.
+- **Smart Balancer Handling & Deduplication**:
+  - Automatically identifies and preserves upstream subscription balancers (e.g. leastPing urltest groups).
+  - Eliminates duplicate node tags (e.g. `proxy-2`) by mapping balancer members to their respective proxy nodes.
+  - Intelligently omits redundant auto-balancer groups if upstream balancers already cover all nodes.
+  - Optional `force_balancer` flag to force SubBridge's generic `Auto` group alongside upstream balancers.
 - **Subscription Merging**: Aggregate up to 8 upstream subscription links per route into a single unified endpoint.
-- **Auto-Spawned Conversion Ports**: Specify `converts = clash, singbox, singbox-pc` to automatically spin up dedicated converted endpoints on consecutive local ports.
+- **Auto-Spawned Conversion Ports**: Specify `converts = clash, singbox-android, singbox-pc, xray-jsons` in `config.ini` to automatically spin up dedicated converted endpoints on consecutive local ports.
 - **Subconverter Compatible API**: Built-in HTTP endpoint on port `25500` compatible with standard subconverter clients (`http://127.0.0.1:25500/sub?target=clash&url=...`).
 - **Device Fingerprinting & Spoofing**: Automatic hardware ID (`MachineGuid` / `machine-id`) and OS telemetry gathering with optional per-route spoofing and custom `User-Agent` headers.
 - **Flexible Execution Modes**:
   - Run interactively in terminal (`--console`)
   - Run in the background as a Windows Service or Linux systemd daemon (`--install`, `--uninstall`, `--restart`)
   - Static one-shot file converter via CLI (`--convert`)
-  - Version & build inspection (`--version`)
+  - Built-in help and version flags (`--help`, `-h`, `--version`, `-v`)
 
 ---
 
@@ -89,7 +101,10 @@ hwid = false
 
 # Upstream subscription links (link1 .. link8)
 link1 = https://example.com/api/v1/client/subscribe?token=xxx
-user_agent1 = v2rayng
+user_agent1 = Happ/3.23.0
+
+# Force SubBridge generic Auto balancer group even if upstream already provides auto-balancers (default: false)
+force_balancer = false
 
 # Automatically expose converted outputs on consecutive ports
 # Port 25501 -> Raw / Merged V2Ray Base64
@@ -98,7 +113,8 @@ user_agent1 = v2rayng
 # Port 25504 -> Sing-Box PC JSON
 # Port 25505 -> Xray / V2Ray Share Links (Base64)
 # Port 25506 -> Xray Standalone Config JSON
-converts = clash, singbox, singbox-pc, xray, xray-one
+# Port 25507 -> Xray Configs Array JSON ([...])
+converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons
 ```
 
 ---
@@ -127,20 +143,30 @@ sudo ./sub_bridge --uninstall
 *Note: On Linux, SubBridge automatically registers a `systemd` service unit if `systemd` is present, or falls back to native daemonization otherwise.*
 
 ### 3. One-Shot File Converter
-Convert any subscription URL or file directly into a configuration file:
+Convert any subscription URL or local file directly into a target configuration:
 ```bash
-# Syntax: ./sub_bridge --convert <target> <url_or_file> [output_file]
-# Targets: clash, singbox, singbox-pc, xray, xray-one, v2ray
+# Syntax: ./sub_bridge --convert <target> <url_or_file> [output_file] [--force-balancer]
+# Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, v2ray
 
+# Convert to Clash YAML
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml
-./sub_bridge --convert singbox "https://example.com/sub" singbox_config.json
-./sub_bridge --convert xray "https://example.com/sub" xray_links.txt
-./sub_bridge --convert xray-one "https://example.com/sub" xray_config.json
+
+# Convert to Sing-box JSON (Mobile/Android)
+./sub_bridge --convert singbox-android "https://example.com/sub" singbox_android.json
+
+# Convert to Sing-box JSON for Desktop / PC
+./sub_bridge --convert singbox-pc "https://example.com/sub" singbox_pc.json
+
+# Convert to native Xray JSONs Array ([...])
+./sub_bridge --convert xray-jsons "https://example.com/sub" xray_configs.json
+
+# Force generation of SubBridge Auto balancer group
+./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml --force-balancer
 ```
 
-### 4. Check Version
-Display version metadata, build time, and repository info:
+### 4. Help & Version
 ```bash
+./sub_bridge --help
 ./sub_bridge --version
 ```
 
@@ -148,6 +174,8 @@ Display version metadata, build time, and repository info:
 When SubBridge is running, connect your proxy client directly to the built-in subconverter port (`25500`):
 ```text
 http://127.0.0.1:25500/sub?target=clash&url=http://127.0.0.1:25501
+http://127.0.0.1:25500/sub?target=xray-jsons&url=https://example.com/sub
+http://127.0.0.1:25500/sub?target=clash&force_balancer=true&url=https://example.com/sub
 ```
 
 ---
@@ -161,13 +189,14 @@ ctest --preset release --output-on-failure
 ```
 
 Tests include:
-- `ParserTest`: URI parsing, Base64 decoding, Xray JSON & node parser validation
+- `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
+
+All tests use synthetic, sanitized dummy data without external dependencies.
 
 ---
 
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).
-

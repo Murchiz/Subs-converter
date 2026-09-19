@@ -40,8 +40,11 @@ user_agent1 = v2rayng
 #   - http://127.0.0.1:25501 (Raw / Merged V2Ray Base64)
 #   - http://127.0.0.1:25502 (Clash / Mihomo YAML)
 #   - http://127.0.0.1:25503 (Sing-Box Android JSON)
-# Supported targets: clash, singbox, singbox-pc, xray, xray-one
-converts = clash, singbox, singbox-pc, xray, xray-one
+# Supported targets: clash, singbox, singbox-pc, xray, xray-one, xray-jsons
+converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons
+
+# Force SubBridge generic Auto balancer group even if upstream already provides auto-balancers (default: false)
+force_balancer = false
 
 # ------------------------------------------------------------------------------
 # Additional Subscription Example

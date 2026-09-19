@@ -108,7 +108,14 @@ struct Route {
     int use_hwid{0};
     int is_subconverter{0};
     char user_agents[8][128]{};
+    int force_balancer{0};
     SOCKET listen_sock{INVALID_SOCKET};
+};
+
+struct Balancer {
+    char name[128]{};
+    char type[32]{};
+    std::vector<std::string> proxies{};
 };
 
 struct Rule {

@@ -170,7 +170,7 @@ void load_config() {
     char uas[8][128]{};
     char sub_name[128]{};
     int link_count = 0;
-    int port = 0, hwid = 0;
+    int port = 0, hwid = 0, force_balancer = 0;
     char converts[1024]{};
 
     auto commit_sub = [&]() {
@@ -187,6 +187,7 @@ void load_config() {
                 safe_strncpy(r->user_agents[i], uas[i]);
             }
             r->use_hwid = hwid;
+            r->force_balancer = force_balancer;
 
             if (converts[0]) {
                 int c_idx = 1;
@@ -203,6 +204,7 @@ void load_config() {
                     safe_strncpy(rc->target, tok);
                     safe_strncpy(rc->name, r->name);
                     rc->use_hwid = 0;
+                    rc->force_balancer = r->force_balancer;
                     c_idx++;
                     tok = safe_crt::strtok_s_wrapper(nullptr, ", \t", &context);
                 }
@@ -210,7 +212,7 @@ void load_config() {
         }
         for (int i = 0; i < 8; i++) { links[i][0] = 0; uas[i][0] = 0; }
         sub_name[0] = 0;
-        link_count = 0; port = 0; hwid = 0; converts[0] = 0;
+        link_count = 0; port = 0; hwid = 0; force_balancer = 0; converts[0] = 0;
     };
 
     while (std::getline(f, raw_line)) {
@@ -246,6 +248,7 @@ void load_config() {
             else if (iequals(k, "name")) safe_strncpy(sub_name, v_str.c_str());
             else if (iequals(k, "port")) port = atoi(v_str.c_str());
             else if (iequals(k, "hwid")) hwid = (iequals(v, "true") || iequals(v, "1"));
+            else if (iequals(k, "force_balancer")) force_balancer = (iequals(v, "true") || iequals(v, "1"));
             else if (iequals(k, "converts")) safe_strncpy(converts, v_str.c_str());
         } else if (in_dev) {
             if (iequals(k, "hwid")) safe_strncpy(g_Dev.hwid, v_str.c_str());
@@ -553,26 +556,58 @@ void run_console() {
 }
 #endif
 
+void print_help(std::string_view prog_cmd) {
+    std::println("Subscription Bridge & Embedded Subconverter\n");
+    std::println("Usage: {} [options]\n", prog_cmd);
+    std::println("Commands:");
+    std::println("  --console                         run in foreground (interactive console mode)");
+    std::println("  --install                         install + start system service");
+    std::println("  --uninstall                       stop + remove system service");
+    std::println("  --restart                         restart service");
+    std::println("  --convert <target> <url> [file]   convert subscription from URL to file");
+    std::println("      [--force-balancer]            force SubBridge auto balancer group");
+    std::println("  --help, -h                        show this help message");
+    std::println("  --version, -v                     show version information\n");
+    std::println("Available targets for --convert:");
+    std::println("  clash                             Clash / Mihomo YAML format");
+    std::println("  singbox-android                   Sing-box format (Mobile/Android)");
+    std::println("  singbox-pc                        Sing-box format (Desktop/PC with SOCKS/HTTP inbounds)");
+    std::println("  xray                              Base64-encoded V2Ray / Xray link list");
+    std::println("  xray-one                          Single consolidated Xray JSON config");
+    std::println("  xray-jsons                        Array of individual Xray JSON configs ([...])");
+    std::println("  v2ray                             Base64-encoded V2Ray link list");
+}
+
 void run_convert(int argc, char **argv) {
     if (argc < 4) {
-        std::println("Usage: sub_bridge --convert <target> <url> [output_file]");
-        std::println("Targets: clash, singbox, singbox-pc, xray, xray-one");
+        std::println("Usage: sub_bridge --convert <target> <url> [output_file] [--force-balancer]");
+        std::println("Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, v2ray");
         return;
     }
     std::string target = argv[2];
     std::string url = argv[3];
-    std::string outfile = (argc >= 5) ? argv[4] : "output.txt";
+    std::string outfile = "output.txt";
+    int force_balancer = 0;
+
+    for (int i = 4; i < argc; i++) {
+        std::string_view arg = argv[i];
+        if (iequals(arg, "--force-balancer") || iequals(arg, "-force-balancer") || iequals(arg, "--force_balancer")) {
+            force_balancer = 1;
+        } else if (outfile == "output.txt") {
+            outfile = argv[i];
+        }
+    }
 
     Route temp_rt{};
     copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
     temp_rt.url_count = 1;
+    temp_rt.force_balancer = force_balancer;
 
     char *body = static_cast<char *>(mem_alloc(BODY_CAP));
 
     std::string out_payload;
-    std::string raw_clash_proxies;
-    std::string raw_clash_names;
     std::vector<Proxy> all_proxies;
+    std::vector<Balancer> all_balancers;
     std::vector<Rule> all_rules;
     int success_count = 0;
 
@@ -581,131 +616,31 @@ void run_convert(int argc, char **argv) {
         if (blen >= 0) {
             success_count++;
             std::string_view payload(body, blen);
-            if (target == "clash" && payload.contains("proxies:")) {
-                // Extract Native Clash YAML proxies
-                size_t p_start = payload.find("proxies:");
-                if (p_start != std::string_view::npos) {
-                    p_start += 8; // skip 'proxies:'
-                    if (p_start < payload.length() && payload[p_start] == '\r') p_start++;
-                    if (p_start < payload.length() && payload[p_start] == '\n') p_start++;
-                    
-                    size_t next_section = std::string_view::npos;
-                    size_t search_pos = p_start;
-                    while ((search_pos = payload.find('\n', search_pos)) != std::string_view::npos) {
-                        search_pos++;
-                        if (search_pos < payload.length() && isalpha(static_cast<unsigned char>(payload[search_pos]))) {
-                            next_section = search_pos;
-                            break;
-                        }
-                    }
-                    size_t p_end = (next_section != std::string_view::npos) ? next_section : payload.length();
-                    
-                    std::string_view block = payload.substr(p_start, p_end - p_start);
-                    
-                    std::string filtered_block;
-                    size_t search_start = 0;
-                    while (true) {
-                        size_t name_pos = block.find("- name:", search_start);
-                        if (name_pos == std::string_view::npos) break;
-                        
-                        size_t node_start = name_pos;
-                        while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
-                            node_start--;
-                        }
-                        
-                        size_t next_name_pos = block.find("- name:", name_pos + 7);
-                        size_t next_node_start = block.length();
-                        if (next_name_pos != std::string_view::npos) {
-                            next_node_start = next_name_pos;
-                            while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
-                                next_node_start--;
-                            }
-                        }
-                        
-                        std::string_view node_str = block.substr(node_start, next_node_start - node_start);
-                        filtered_block.append(node_str);
-                        
-                        size_t n_pos = node_str.find("- name:");
-                        size_t end_line = node_str.find('\n', n_pos);
-                        if (end_line == std::string_view::npos) end_line = node_str.length();
-                        size_t val_start = node_str.find_first_not_of(" \t", n_pos + 7);
-                        if (val_start != std::string_view::npos && val_start < end_line) {
-                            size_t val_end = end_line - 1;
-                            while (val_end >= val_start && (node_str[val_end] == ' ' || node_str[val_end] == '\t' || node_str[val_end] == '\r' || node_str[val_end] == '\n')) {
-                                val_end--;
-                            }
-                            if (val_start <= val_end) {
-                                std::string_view raw_name = node_str.substr(val_start, val_end - val_start + 1);
-                                if (raw_name.length() >= 2 && ((raw_name.front() == '"' && raw_name.back() == '"') ||
-                                    (raw_name.front() == '\'' && raw_name.back() == '\''))) {
-                                    raw_name = raw_name.substr(1, raw_name.length() - 2);
-                                }
-                                raw_clash_names += std::format("      - \"{}\"\n", raw_name);
-                            }
-                        }
-                        
-                        search_start = next_name_pos;
-                    }
-                    raw_clash_proxies += filtered_block;
-                }
-            } else {
-                std::string_view decoded;
-                size_t first_char = payload.find_first_not_of(" \t\r\n");
-                std::string decoded_buf;
-                if (first_char != std::string_view::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
-                    decoded = payload;
-                } else if (payload.contains("proxies:")) {
-                    decoded = payload;
-                } else {
-                    if (payload.contains("://")) {
-                        decoded = payload;
-                    } else {
-                        decoded_buf = base64_decode(payload);
-                        decoded = decoded_buf;
-                    }
-                }
-                auto p = parse_proxies(decoded);
-                all_proxies.insert(all_proxies.end(), p.begin(), p.end());
-                auto r = parse_xray_rules(decoded);
-                all_rules.insert(all_rules.end(), r.begin(), r.end());
-            }
+            std::vector<Proxy> p;
+            std::vector<Balancer> b;
+            std::vector<Rule> r;
+            parse_subscription(payload, p, b, r);
+            all_proxies.insert(all_proxies.end(), p.begin(), p.end());
+            all_balancers.insert(all_balancers.end(), b.begin(), b.end());
+            all_rules.insert(all_rules.end(), r.begin(), r.end());
         }
     }
 
     if (success_count > 0) {
         if (target == "clash") {
-            out_payload = gen_clash(all_proxies, all_rules);
-            if (!raw_clash_proxies.empty()) {
-                while (!raw_clash_proxies.empty() && isspace(static_cast<unsigned char>(raw_clash_proxies.back()))) {
-                    raw_clash_proxies.pop_back();
-                }
-                raw_clash_proxies += "\n";
-                
-                size_t pg = out_payload.find("proxy-groups:");
-                if (pg != std::string::npos) {
-                    out_payload.insert(pg, raw_clash_proxies);
-                    
-                    size_t auto_grp = out_payload.find("  - name: Auto\n    type: url-test");
-                    if (auto_grp != std::string::npos) {
-                        out_payload.insert(auto_grp, raw_clash_names);
-                    }
-                    
-                    size_t rules = out_payload.find("rules:");
-                    if (rules != std::string::npos) {
-                        out_payload.insert(rules, raw_clash_names);
-                    }
-                }
-            }
-        } else if (target == "singbox" || target == "sing-box") {
-            out_payload = gen_singbox(all_proxies, "android", all_rules);
+            out_payload = gen_clash(all_proxies, all_rules, all_balancers, force_balancer);
         } else if (target == "singbox-pc" || target == "sing-box-pc") {
-            out_payload = gen_singbox(all_proxies, "pc", all_rules);
+            out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, force_balancer);
+        } else if (target == "singbox-android" || target == "sing-box-android") {
+            out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, force_balancer);
         } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
             out_payload = gen_xray(all_proxies, "", all_rules);
+        } else if (target == "xray-jsons") {
+            out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
         } else {
             out_payload = gen_v2ray(all_proxies);
         }
-        
+
         std::ofstream out_file(outfile, std::ios::binary);
         if (out_file.is_open()) {
             out_file.write(out_payload.data(), out_payload.length());
@@ -736,10 +671,23 @@ int main(int argc, char **argv) {
     dev_gather();
     load_config();
 
+    fs::path prog_path(argv[0]);
+    std::string prog_name = prog_path.filename().string();
+    if (prog_name.empty()) prog_name = "sub_bridge";
+#ifndef _WIN32
+    std::string prog_cmd = "./" + prog_name;
+#else
+    std::string prog_cmd = ".\\" + prog_name;
+#endif
+
     if (argc > 1) {
         std::string_view a = argv[1];
         if (iequals(a, "--version") || iequals(a, "-version") || iequals(a, "-v") || iequals(a, "/version")) {
             print_version();
+            return 0;
+        }
+        if (iequals(a, "--help") || iequals(a, "-help") || iequals(a, "-h") || iequals(a, "/help") || iequals(a, "/h") || iequals(a, "/?") || iequals(a, "help")) {
+            print_help(prog_cmd);
             return 0;
         }
         if (iequals(a, "--install") || iequals(a, "-install") || iequals(a, "/install")) {
@@ -764,22 +712,7 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        fs::path prog_path(argv[0]);
-        std::string prog_name = prog_path.filename().string();
-        if (prog_name.empty()) prog_name = "sub_bridge";
-#ifndef _WIN32
-        std::string prog_cmd = "./" + prog_name;
-#else
-        std::string prog_cmd = ".\\" + prog_name;
-#endif
-
-        std::println("Subscription Bridge & Embedded Subconverter\n");
-        std::println("  {} --install                      install + start service", prog_cmd);
-        std::println("  {} --uninstall                    stop + remove service", prog_cmd);
-        std::println("  {} --restart                      restart service", prog_cmd);
-        std::println("  {} --console                      run in foreground", prog_cmd);
-        std::println("  {} --convert <target> <url> [file] static file convert", prog_cmd);
-        std::println("  {} --version                      show version information", prog_cmd);
+        print_help(prog_cmd);
         return 1;
     }
 
@@ -787,18 +720,15 @@ int main(int argc, char **argv) {
     SERVICE_TABLE_ENTRYA tbl[] = { { const_cast<char *>(SVC_NAME), svc_main }, { nullptr, nullptr } };
     if (!StartServiceCtrlDispatcherA(tbl)) {
         if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-            std::println("Not launched by SCM.");
+            std::println("SubBridge - Local Subscription Bridge & Subconverter\n");
             std::println("  Use  --console   to run interactively");
-            std::println("  Use  --install   to install as a service");
-            std::println("  Use  --restart   to restart the service");
+            std::println("  Use  --help      to show all commands and options");
         }
     }
 #else
     std::println("SubBridge - Local Subscription Bridge & Subconverter\n");
     std::println("  Use  --console   to run interactively");
-    std::println("  Use  --install   to install as a background service");
-    std::println("  Use  --restart   to restart the service");
-    std::println("  Use  --version   to show version");
+    std::println("  Use  --help      to show all commands and options");
 #endif
     return 0;
 }

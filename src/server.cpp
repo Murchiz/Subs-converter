@@ -179,7 +179,10 @@ std::string request_header(std::string_view req, std::string_view name) {
 
 std::string target_from_user_agent(std::string_view ua) {
     if (contains_ci(ua, "clash")) return "clash";
-    if (contains_ci(ua, "sing-box") || contains_ci(ua, "singbox")) return "singbox";
+    if (contains_ci(ua, "sing-box") || contains_ci(ua, "singbox")) {
+        if (contains_ci(ua, "android")) return "singbox-android";
+        return "singbox-pc";
+    }
     if (contains_ci(ua, "v2ray") || contains_ci(ua, "xray") ||
         contains_ci(ua, "nekobox") || contains_ci(ua, "nekoray") ||
         contains_ci(ua, "happ") || contains_ci(ua, "hiddify") ||
@@ -231,8 +234,9 @@ std::string metadata_headers(const SubMetadata& meta) {
 
 const char *converted_content_type(std::string_view target) {
     if (target == "clash") return "text/yaml; charset=utf-8";
-    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
-        target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
+    if (target == "singbox-pc" || target == "sing-box-pc" ||
+        target == "singbox-android" || target == "sing-box-android" ||
+        target == "xray-one" || target == "xray-json" || target == "v2ray-json" || target == "xray-jsons") {
         return "application/json; charset=utf-8";
     }
     return "text/plain; charset=utf-8";
@@ -246,9 +250,9 @@ bool preferred_metadata_source(std::string_view target, const Route& rt, int ind
     if (target == "v2ray" || target == "xray") {
         return contains_ci(meta.content_type, "text/plain");
     }
-    if (target == "singbox" || target == "sing-box" || target == "singbox-pc" || target == "sing-box-pc" ||
-        target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
-        return contains_ci(ua, "sing") || contains_ci(ua, "xray") || contains_ci(meta.content_type, "json");
+    if (target == "singbox-pc" || target == "sing-box-pc" ||
+        target == "singbox-android" || target == "sing-box-android") {
+        return contains_ci(ua, "sing-box") || contains_ci(ua, "singbox") || contains_ci(meta.content_type, "json");
     }
     return false;
 }
@@ -476,9 +480,8 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
     }
 
     std::string out_payload;
-    std::string raw_clash_proxies;
-    std::string raw_clash_names;
     std::vector<Proxy> all_proxies;
+    std::vector<Balancer> all_balancers;
     std::vector<Rule> all_rules;
     int success_count = 0;
 
@@ -498,91 +501,13 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
 
             std::string_view payload(body, blen);
 
-            if (target == "clash" && payload.contains("proxies:")) {
-                // Extract Native Clash YAML proxies
-                size_t p_start = payload.find("proxies:");
-                if (p_start != std::string_view::npos) {
-                    p_start += 8;
-                    if (p_start < payload.length() && payload[p_start] == '\r') p_start++;
-                    if (p_start < payload.length() && payload[p_start] == '\n') p_start++;
-
-                    size_t next_section = std::string_view::npos;
-                    size_t search_pos = p_start;
-                    while ((search_pos = payload.find('\n', search_pos)) != std::string_view::npos) {
-                        search_pos++;
-                        if (search_pos < payload.length() && isalpha(static_cast<unsigned char>(payload[search_pos]))) {
-                            next_section = search_pos;
-                            break;
-                        }
-                    }
-                    size_t p_end = (next_section != std::string_view::npos) ? next_section : payload.length();
-                    std::string_view block = payload.substr(p_start, p_end - p_start);
-
-                    std::string filtered_block;
-                    size_t search_start = 0;
-                    while (true) {
-                        size_t name_pos = block.find("- name:", search_start);
-                        if (name_pos == std::string_view::npos) break;
-
-                        size_t node_start = name_pos;
-                        while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
-                            node_start--;
-                        }
-
-                        size_t next_name_pos = block.find("- name:", name_pos + 7);
-                        size_t next_node_start = block.length();
-                        if (next_name_pos != std::string_view::npos) {
-                            next_node_start = next_name_pos;
-                            while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
-                                next_node_start--;
-                            }
-                        }
-
-                        std::string_view node_str = block.substr(node_start, next_node_start - node_start);
-                        filtered_block.append(node_str);
-
-                        size_t n_pos = node_str.find("- name:");
-                        size_t end_line = node_str.find('\n', n_pos);
-                        if (end_line == std::string_view::npos) end_line = node_str.length();
-                        size_t val_start = node_str.find_first_not_of(" \t", n_pos + 7);
-                        if (val_start != std::string_view::npos && val_start < end_line) {
-                            size_t val_end = end_line - 1;
-                            while (val_end >= val_start && (node_str[val_end] == ' ' || node_str[val_end] == '\t' || node_str[val_end] == '\r' || node_str[val_end] == '\n')) {
-                                val_end--;
-                            }
-                            if (val_start <= val_end) {
-                                std::string_view raw_name = node_str.substr(val_start, val_end - val_start + 1);
-                                if (raw_name.length() >= 2 && ((raw_name.front() == '"' && raw_name.back() == '"') ||
-                                    (raw_name.front() == '\'' && raw_name.back() == '\''))) {
-                                    raw_name = raw_name.substr(1, raw_name.length() - 2);
-                                }
-                                raw_clash_names += std::format("      - \"{}\"\n", raw_name);
-                            }
-                        }
-
-                        search_start = next_name_pos;
-                    }
-                    raw_clash_proxies += filtered_block;
-                }
-            } else if (!target.empty()) {
-                std::string_view decoded;
-                size_t first_char = payload.find_first_not_of(" \t\r\n");
-                std::string decoded_buf;
-                if (first_char != std::string_view::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
-                    decoded = payload;
-                } else if (payload.contains("proxies:")) {
-                    decoded = payload;
-                } else {
-                    if (payload.contains("://")) {
-                        decoded = payload;
-                    } else {
-                        decoded_buf = base64_decode(payload);
-                        decoded = decoded_buf;
-                    }
-                }
-                auto p = parse_proxies(decoded);
+            if (!target.empty()) {
+                std::vector<Proxy> p;
+                std::vector<Balancer> b;
+                std::vector<Rule> r;
+                parse_subscription(payload, p, b, r);
                 all_proxies.insert(all_proxies.end(), p.begin(), p.end());
-                auto r = parse_xray_rules(decoded);
+                all_balancers.insert(all_balancers.end(), b.begin(), b.end());
                 all_rules.insert(all_rules.end(), r.begin(), r.end());
             } else {
                 if (!out_payload.empty()) out_payload += "\n";
@@ -594,37 +519,19 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
     if (success_count > 0) {
         std::string content_type;
         if (target == "clash") {
-            out_payload = gen_clash(all_proxies, all_rules);
-            if (!raw_clash_proxies.empty()) {
-                while (!raw_clash_proxies.empty() && isspace(static_cast<unsigned char>(raw_clash_proxies.back()))) {
-                    raw_clash_proxies.pop_back();
-                }
-                raw_clash_proxies += "\n";
-
-                size_t pg = out_payload.find("proxy-groups:");
-                if (pg != std::string::npos) {
-                    out_payload.insert(pg, raw_clash_proxies);
-
-                    size_t auto_grp = out_payload.find("  - name: Auto\n    type: url-test");
-                    if (auto_grp != std::string::npos) {
-                        out_payload.insert(auto_grp, raw_clash_names);
-                    }
-
-                    size_t rules = out_payload.find("rules:");
-                    if (rules != std::string::npos) {
-                        out_payload.insert(rules, raw_clash_names);
-                    }
-                }
-            }
-            content_type = converted_content_type(target);
-        } else if (target == "singbox" || target == "sing-box") {
-            out_payload = gen_singbox(all_proxies, "android", all_rules);
+            out_payload = gen_clash(all_proxies, all_rules, all_balancers, source_rt->force_balancer);
             content_type = converted_content_type(target);
         } else if (target == "singbox-pc" || target == "sing-box-pc") {
-            out_payload = gen_singbox(all_proxies, "pc", all_rules);
+            out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, source_rt->force_balancer);
+            content_type = converted_content_type(target);
+        } else if (target == "singbox-android" || target == "sing-box-android") {
+            out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, source_rt->force_balancer);
             content_type = converted_content_type(target);
         } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
             out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
+            content_type = converted_content_type(target);
+        } else if (target == "xray-jsons") {
+            out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
             content_type = converted_content_type(target);
         } else if (target == "xray" || target == "v2ray" || !target.empty()) {
             out_payload = gen_v2ray(all_proxies);
@@ -668,6 +575,7 @@ void handle_subconverter(SOCKET c, std::string_view req) {
 
     std::string_view qs = req.substr(q_pos + 1, space_pos - (q_pos + 1));
     std::string target, url;
+    int force_balancer = -1;
     size_t start = 0;
     while (start < qs.length()) {
         size_t amp = qs.find('&', start);
@@ -679,6 +587,9 @@ void handle_subconverter(SOCKET c, std::string_view req) {
             std::string v = url_decode(kv.substr(eq + 1));
             if (k == "target") target = v;
             else if (k == "url") url = v;
+            else if (k == "force_balancer") {
+                force_balancer = (v == "true" || v == "1") ? 1 : 0;
+            }
         }
         start = amp + 1;
     }
@@ -699,14 +610,18 @@ void handle_subconverter(SOCKET c, std::string_view req) {
     if (internal_port > 0) {
         for (int i = 0; i < g_RouteCount; i++) {
             if (g_Routes[i].local_port == internal_port) {
-                source_rt = &g_Routes[i];
+                temp_rt = g_Routes[i];
+                source_rt = &temp_rt;
                 break;
             }
         }
     }
-    if (source_rt == &temp_rt) {
+    if (source_rt == &temp_rt && temp_rt.url_count == 0) {
         copy_limited(temp_rt.urls[0], sizeof(temp_rt.urls[0]), url.c_str());
         temp_rt.url_count = 1;
+    }
+    if (force_balancer != -1) {
+        temp_rt.force_balancer = force_balancer;
     }
 
     serve_converted_or_raw(c, source_rt, target, 25500);

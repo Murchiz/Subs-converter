@@ -10,4 +10,6 @@ std::vector<Proxy> parse_clash_yaml(std::string_view yaml);
 std::vector<Rule> parse_clash_rules(std::string_view yaml);
 std::vector<Proxy> parse_proxies(std::string_view decoded);
 std::vector<Rule> parse_xray_rules(std::string_view json);
+std::vector<Balancer> parse_balancers(std::string_view decoded, const std::vector<Proxy>& standalone_proxies);
+void parse_subscription(std::string_view payload, std::vector<Proxy>& out_proxies, std::vector<Balancer>& out_balancers, std::vector<Rule>& out_rules);
 

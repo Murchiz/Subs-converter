@@ -733,6 +733,217 @@ std::vector<Rule> parse_clash_rules(std::string_view yaml) {
     return rules;
 }
 
+static bool is_xray_balancer_config(std::string_view obj) {
+    if (obj.contains("\"balancers\"")) return true;
+    if (obj.contains("\"balancerTag\"")) return true;
+    return false;
+}
+
+std::vector<Balancer> parse_clash_balancers(std::string_view yaml) {
+    std::vector<Balancer> balancers;
+    size_t pg_pos = yaml.find("proxy-groups:");
+    if (pg_pos == std::string_view::npos) return balancers;
+
+    pg_pos += 13;
+    size_t search_pos = pg_pos;
+    size_t next_section = yaml.length();
+    while ((search_pos = yaml.find('\n', search_pos)) != std::string_view::npos) {
+        search_pos++;
+        if (search_pos < yaml.length() && isalpha(static_cast<unsigned char>(yaml[search_pos]))) {
+            next_section = search_pos;
+            break;
+        }
+    }
+    std::string_view block = yaml.substr(pg_pos, next_section - pg_pos);
+
+    size_t start = 0;
+    while (true) {
+        size_t name_pos = block.find("- name:", start);
+        if (name_pos == std::string_view::npos) break;
+
+        size_t node_start = name_pos;
+        while (node_start > 0 && (block[node_start - 1] == ' ' || block[node_start - 1] == '\t')) {
+            node_start--;
+        }
+
+        size_t next_name_pos = block.find("- name:", name_pos + 7);
+        size_t next_node_start = block.length();
+        if (next_name_pos != std::string_view::npos) {
+            next_node_start = next_name_pos;
+            while (next_node_start > node_start && (block[next_node_start - 1] == ' ' || block[next_node_start - 1] == '\t')) {
+                next_node_start--;
+            }
+        }
+
+        std::string_view grp_str = block.substr(node_start, next_node_start - node_start);
+        std::string name = yaml_get_val(grp_str, "name");
+        std::string type = yaml_get_val(grp_str, "type");
+        if (type.empty()) type = "select";
+
+        if (!name.empty() && !iequals(name, "Proxy") && !iequals(name, "Auto")) {
+            Balancer b{};
+            safe_strncpy(b.name, name.c_str());
+            safe_strncpy(b.type, type.c_str());
+
+            size_t p_list = grp_str.find("proxies:");
+            if (p_list != std::string_view::npos) {
+                p_list += 8;
+                size_t p_cur = p_list;
+                while (p_cur < grp_str.length()) {
+                    size_t dash = grp_str.find("- ", p_cur);
+                    if (dash == std::string_view::npos) break;
+                    size_t end_l = grp_str.find('\n', dash);
+                    if (end_l == std::string_view::npos) end_l = grp_str.length();
+                    std::string_view p_name = grp_str.substr(dash + 2, end_l - (dash + 2));
+                    while (!p_name.empty() && (p_name.front() == ' ' || p_name.front() == '\t')) p_name.remove_prefix(1);
+                    while (!p_name.empty() && (p_name.back() == ' ' || p_name.back() == '\t' || p_name.back() == '\r')) p_name.remove_suffix(1);
+                    if (p_name.length() >= 2 && ((p_name.front() == '"' && p_name.back() == '"') || (p_name.front() == '\'' && p_name.back() == '\''))) {
+                        p_name = p_name.substr(1, p_name.length() - 2);
+                    }
+                    if (!p_name.empty()) {
+                        b.proxies.emplace_back(p_name);
+                    }
+                    p_cur = end_l + 1;
+                }
+            }
+            if (!b.proxies.empty()) {
+                balancers.push_back(b);
+            }
+        }
+
+        if (next_name_pos == std::string_view::npos) break;
+        start = next_name_pos;
+    }
+    return balancers;
+}
+
+std::vector<Balancer> parse_balancers(std::string_view decoded, const std::vector<Proxy>& standalone_proxies) {
+    if (decoded.contains("proxies:") && decoded.contains("proxy-groups:")) {
+        auto cb = parse_clash_balancers(decoded);
+        if (!cb.empty()) return cb;
+    }
+
+    std::vector<Balancer> balancers;
+    size_t first_char = decoded.find_first_not_of(" \t\r\n");
+    if (first_char == std::string_view::npos || (decoded[first_char] != '[' && decoded[first_char] != '{')) {
+        return balancers;
+    }
+
+    size_t search_pos = 0;
+    while (search_pos < decoded.length()) {
+        size_t start = decoded.find('{', search_pos);
+        if (start == std::string_view::npos) break;
+
+        int depth = 0;
+        size_t end = start;
+        for (size_t i = start; i < decoded.length(); i++) {
+            if (decoded[i] == '{') depth++;
+            else if (decoded[i] == '}') {
+                depth--;
+                if (depth == 0) { end = i; break; }
+            }
+        }
+
+        if (depth == 0 && end > start) {
+            std::string_view config_obj = decoded.substr(start, end - start + 1);
+            if (is_xray_balancer_config(config_obj)) {
+                std::string remarks = json_extract_string(config_obj, "remarks");
+                if (remarks.empty()) remarks = json_extract_string(config_obj, "ps");
+                if (remarks.empty()) remarks = json_extract_string(config_obj, "tag");
+                if (remarks.empty()) remarks = "Auto Balancer";
+
+                Balancer b{};
+                safe_strncpy(b.name, remarks.c_str());
+                safe_strncpy(b.type, "url-test");
+
+                size_t outbounds_pos = config_obj.find("\"outbounds\"");
+                if (outbounds_pos != std::string_view::npos) {
+                    size_t arr_start = config_obj.find('[', outbounds_pos);
+                    if (arr_start != std::string_view::npos) {
+                        int arr_depth = 0;
+                        size_t arr_end = arr_start;
+                        for (size_t i = arr_start; i < config_obj.length(); i++) {
+                            if (config_obj[i] == '[') arr_depth++;
+                            else if (config_obj[i] == ']') {
+                                arr_depth--;
+                                if (arr_depth == 0) { arr_end = i; break; }
+                            }
+                        }
+                        std::string_view out_block = config_obj.substr(arr_start + 1, arr_end - arr_start - 1);
+                        size_t item_start = 0;
+                        int idx = 1;
+                        while ((item_start = out_block.find('{', item_start)) != std::string_view::npos) {
+                            int d = 0;
+                            size_t item_end = item_start;
+                            for (size_t i = item_start; i < out_block.length(); i++) {
+                                if (out_block[i] == '{') d++;
+                                else if (out_block[i] == '}') {
+                                    d--;
+                                    if (d == 0) { item_end = i; break; }
+                                }
+                            }
+                            if (d == 0 && item_end > item_start) {
+                                std::string_view out_item = out_block.substr(item_start, item_end - item_start + 1);
+                                Proxy p = parse_xray_outbound_obj(out_item, "");
+                                if (p.protocol[0] != '\0') {
+                                    const Proxy *matched = nullptr;
+                                    for (const auto& sp : standalone_proxies) {
+                                        if (iequals(sp.server, p.server) && sp.port == p.port) {
+                                            matched = &sp;
+                                            break;
+                                        }
+                                    }
+                                    if (matched) {
+                                        b.proxies.push_back(matched->name);
+                                    } else if (p.name[0]) {
+                                        b.proxies.push_back(p.name);
+                                    } else {
+                                        std::string syn_name = std::format("{} #{}", remarks, idx);
+                                        b.proxies.push_back(syn_name);
+                                    }
+                                    idx++;
+                                }
+                                item_start = item_end + 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!b.proxies.empty()) {
+                    balancers.push_back(b);
+                }
+            }
+            search_pos = end + 1;
+        } else {
+            break;
+        }
+    }
+    return balancers;
+}
+
+void parse_subscription(std::string_view payload, std::vector<Proxy>& out_proxies, std::vector<Balancer>& out_balancers, std::vector<Rule>& out_rules) {
+    std::string_view decoded;
+    std::string decoded_buf;
+    size_t first_char = payload.find_first_not_of(" \t\r\n");
+    if (first_char != std::string_view::npos && (payload[first_char] == '[' || payload[first_char] == '{')) {
+        decoded = payload;
+    } else if (payload.contains("proxies:")) {
+        decoded = payload;
+    } else {
+        if (payload.contains("://")) {
+            decoded = payload;
+        } else {
+            decoded_buf = base64_decode(payload);
+            decoded = decoded_buf;
+        }
+    }
+
+    out_proxies = parse_proxies(decoded);
+    out_balancers = parse_balancers(decoded, out_proxies);
+    out_rules = parse_xray_rules(decoded);
+}
+
 std::vector<Proxy> parse_proxies(std::string_view decoded) {
     if (decoded.contains("proxies:")) {
         auto clash_proxies = parse_clash_yaml(decoded);
@@ -740,6 +951,7 @@ std::vector<Proxy> parse_proxies(std::string_view decoded) {
     }
 
     std::vector<Proxy> proxies;
+    std::vector<std::string_view> balancer_configs;
 
     size_t first_char = decoded.find_first_not_of(" \t\r\n");
     if (first_char != std::string_view::npos && (decoded[first_char] == '[' || decoded[first_char] == '{')) {
@@ -760,24 +972,85 @@ std::vector<Proxy> parse_proxies(std::string_view decoded) {
 
             if (depth == 0 && end > start) {
                 std::string_view config_obj = decoded.substr(start, end - start + 1);
-                std::string remarks = json_extract_string(config_obj, "remarks");
-                if (remarks.empty()) remarks = json_extract_string(config_obj, "ps");
+                if (is_xray_balancer_config(config_obj)) {
+                    balancer_configs.push_back(config_obj);
+                } else {
+                    std::string remarks = json_extract_string(config_obj, "remarks");
+                    if (remarks.empty()) remarks = json_extract_string(config_obj, "ps");
 
-                size_t outbounds_pos = config_obj.find("\"outbounds\"");
+                    size_t outbounds_pos = config_obj.find("\"outbounds\"");
+                    if (outbounds_pos != std::string_view::npos) {
+                        size_t arr_start = config_obj.find('[', outbounds_pos);
+                        if (arr_start != std::string_view::npos) {
+                            int arr_depth = 0;
+                            size_t arr_end = arr_start;
+                            for (size_t i = arr_start; i < config_obj.length(); i++) {
+                                if (config_obj[i] == '[') arr_depth++;
+                                else if (config_obj[i] == ']') {
+                                    arr_depth--;
+                                    if (arr_depth == 0) { arr_end = i; break; }
+                                }
+                            }
+                            std::string_view out_block = config_obj.substr(arr_start + 1, arr_end - arr_start - 1);
+                            size_t item_start = 0;
+                            while ((item_start = out_block.find('{', item_start)) != std::string_view::npos) {
+                                int d = 0;
+                                size_t item_end = item_start;
+                                for (size_t i = item_start; i < out_block.length(); i++) {
+                                    if (out_block[i] == '{') d++;
+                                    else if (out_block[i] == '}') {
+                                        d--;
+                                        if (d == 0) { item_end = i; break; }
+                                    }
+                                }
+                                if (d == 0 && item_end > item_start) {
+                                    std::string_view out_item = out_block.substr(item_start, item_end - item_start + 1);
+                                    Proxy p = parse_xray_outbound_obj(out_item, remarks);
+                                    if (p.protocol[0] != '\0') {
+                                        proxies.push_back(p);
+                                    }
+                                    item_start = item_end + 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        Proxy p = parse_xray_outbound_obj(config_obj, remarks);
+                        if (p.protocol[0] != '\0') {
+                            proxies.push_back(p);
+                        }
+                    }
+                }
+                search_pos = end + 1;
+            } else {
+                break;
+            }
+        }
+
+        // If no standalone proxies were found but we have balancer configs (edge case: only balancers in sub)
+        if (proxies.empty() && !balancer_configs.empty()) {
+            for (auto b_cfg : balancer_configs) {
+                std::string remarks = json_extract_string(b_cfg, "remarks");
+                if (remarks.empty()) remarks = json_extract_string(b_cfg, "ps");
+                if (remarks.empty()) remarks = "Proxy";
+
+                size_t outbounds_pos = b_cfg.find("\"outbounds\"");
                 if (outbounds_pos != std::string_view::npos) {
-                    size_t arr_start = config_obj.find('[', outbounds_pos);
+                    size_t arr_start = b_cfg.find('[', outbounds_pos);
                     if (arr_start != std::string_view::npos) {
                         int arr_depth = 0;
                         size_t arr_end = arr_start;
-                        for (size_t i = arr_start; i < config_obj.length(); i++) {
-                            if (config_obj[i] == '[') arr_depth++;
-                            else if (config_obj[i] == ']') {
+                        for (size_t i = arr_start; i < b_cfg.length(); i++) {
+                            if (b_cfg[i] == '[') arr_depth++;
+                            else if (b_cfg[i] == ']') {
                                 arr_depth--;
                                 if (arr_depth == 0) { arr_end = i; break; }
                             }
                         }
-                        std::string_view out_block = config_obj.substr(arr_start + 1, arr_end - arr_start - 1);
+                        std::string_view out_block = b_cfg.substr(arr_start + 1, arr_end - arr_start - 1);
                         size_t item_start = 0;
+                        int idx = 1;
                         while ((item_start = out_block.find('{', item_start)) != std::string_view::npos) {
                             int d = 0;
                             size_t item_end = item_start;
@@ -790,9 +1063,12 @@ std::vector<Proxy> parse_proxies(std::string_view decoded) {
                             }
                             if (d == 0 && item_end > item_start) {
                                 std::string_view out_item = out_block.substr(item_start, item_end - item_start + 1);
-                                Proxy p = parse_xray_outbound_obj(out_item, remarks);
+                                std::string item_name = std::format("{} #{}", remarks, idx);
+                                Proxy p = parse_xray_outbound_obj(out_item, item_name);
                                 if (p.protocol[0] != '\0') {
+                                    safe_strncpy(p.name, item_name.c_str());
                                     proxies.push_back(p);
+                                    idx++;
                                 }
                                 item_start = item_end + 1;
                             } else {
@@ -800,17 +1076,10 @@ std::vector<Proxy> parse_proxies(std::string_view decoded) {
                             }
                         }
                     }
-                } else {
-                    Proxy p = parse_xray_outbound_obj(config_obj, remarks);
-                    if (p.protocol[0] != '\0') {
-                        proxies.push_back(p);
-                    }
                 }
-                search_pos = end + 1;
-            } else {
-                break;
             }
         }
+
         if (!proxies.empty()) return proxies;
     }
 
