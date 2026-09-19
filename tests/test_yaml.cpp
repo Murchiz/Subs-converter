@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <cassert>
 #include "types.h"
 
 namespace fs = std::filesystem;
@@ -19,6 +20,7 @@ int main(int argc, char* argv[]) {
     if (argc > 0 && argv[0]) {
         fs::path exe_dir = fs::path(argv[0]).parent_path();
         search_dirs.push_back(exe_dir / "reference");
+        search_dirs.push_back(exe_dir / "tests/reference");
         search_dirs.push_back(exe_dir / "../tests/reference");
         search_dirs.push_back(exe_dir / "../../tests/reference");
     }
@@ -26,6 +28,8 @@ int main(int argc, char* argv[]) {
     // Relative paths
     search_dirs.emplace_back("tests/reference");
     search_dirs.emplace_back("reference");
+    search_dirs.emplace_back("../tests/reference");
+    search_dirs.emplace_back("../../tests/reference");
     
     for (const auto& dir : search_dirs) {
         fs::path candidate = dir / "meta.yaml";
@@ -111,5 +115,10 @@ int main(int argc, char* argv[]) {
     std::println("{}", raw_clash_proxies);
     std::println("--- RAW CLASH NAMES ---");
     std::println("{}", raw_clash_names);
+
+    assert(!raw_clash_proxies.empty() && "Expected clash proxies to be extracted from meta.yaml");
+    assert(raw_clash_proxies.contains("Germany") && "Expected 'Germany' node in clash proxies");
+    assert(raw_clash_names.contains("Germany") && "Expected 'Germany' in clash names");
+    std::println("test_yaml passed.");
     return 0;
 }

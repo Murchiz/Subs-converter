@@ -86,6 +86,7 @@ set(TEST_SOURCES_PARSER
 )
 add_executable(test_parser ${TEST_SOURCES_PARSER})
 add_test(NAME ParserTest COMMAND test_parser)
+set_tests_properties(ParserTest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # YAML test
 set(TEST_SOURCES_YAML
@@ -97,6 +98,7 @@ set(TEST_SOURCES_YAML
 )
 add_executable(test_yaml ${TEST_SOURCES_YAML})
 add_test(NAME YamlTest COMMAND test_yaml)
+set_tests_properties(YamlTest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # Python YAML test (run via custom test command using python)
 find_package(Python3 COMPONENTS Interpreter)
@@ -105,5 +107,8 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(PythonYamlTest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
-# Copy test fixtures from private references (done externally); 
-# fixtures should exist in: example.json fetched_sub.json references/original.json reference/meta.yaml
+# Ensure test fixtures are copied to build directory for direct binary execution
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/example.json DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/fetched_sub.json DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/references DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

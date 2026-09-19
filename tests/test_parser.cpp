@@ -48,10 +48,37 @@ void test_parse_uri() {
     std::println("test_parse_uri passed.");
 }
 
+static const char* g_argv0 = nullptr;
+
+static std::string find_test_file(const std::string& rel_path) {
+    std::vector<fs::path> candidates;
+    if (g_argv0) {
+        fs::path exe_dir = fs::path(g_argv0).parent_path();
+        candidates.push_back(exe_dir / rel_path);
+        candidates.push_back(exe_dir / "tests" / rel_path);
+        candidates.push_back(exe_dir / "../tests" / rel_path);
+        candidates.push_back(exe_dir / "../../tests" / rel_path);
+    }
+    candidates.push_back(fs::path(rel_path));
+    candidates.push_back(fs::path("tests") / rel_path);
+    candidates.push_back(fs::path("..") / rel_path);
+    candidates.push_back(fs::path("../tests") / rel_path);
+    candidates.push_back(fs::path("../../tests") / rel_path);
+
+    for (const auto& c : candidates) {
+        if (fs::exists(c)) {
+            return c.string();
+        }
+    }
+    return "";
+}
+
 void test_parse_json() {
     // 1. Test example.json
-    if (fs::exists("example.json")) {
-        std::ifstream file("example.json");
+    std::string example_path = find_test_file("example.json");
+    assert(!example_path.empty() && "example.json fixture not found");
+    {
+        std::ifstream file(example_path);
         assert(file.is_open());
         std::stringstream buffer;
         buffer << file.rdbuf();
@@ -64,41 +91,45 @@ void test_parse_json() {
         assert(std::string_view(p.uuid) == "example-uuid-0000-0000-0000-00000000");
         assert(std::string_view(p.sni) == "example.net");
         assert(std::string_view(p.alpn) == "h3");
-
     }
 
     // 2. Test fetched_sub.json
-    if (fs::exists("fetched_sub.json")) {
-        std::ifstream file("fetched_sub.json");
+    std::string sub_path = find_test_file("fetched_sub.json");
+    assert(!sub_path.empty() && "fetched_sub.json fixture not found");
+    {
+        std::ifstream file(sub_path);
         assert(file.is_open());
         std::stringstream buffer;
         buffer << file.rdbuf();
         std::vector<Proxy> proxies = parse_proxies(buffer.str());
-        assert(proxies.size() == 28);
+        assert(proxies.size() == 4);
         int hysteria_cnt = 0;
         int vless_cnt = 0;
+        int vmess_cnt = 0;
         for (const auto& p : proxies) {
             std::string_view proto = p.protocol;
             if (proto == "hysteria2" || proto == "hysteria") {
                 hysteria_cnt++;
             } else if (proto == "vless") {
                 vless_cnt++;
+            } else if (proto == "vmess") {
+                vmess_cnt++;
             }
         }
-        assert(hysteria_cnt == 14);
-        assert(vless_cnt == 14);
+        assert(hysteria_cnt == 2);
+        assert(vless_cnt == 1);
+        assert(vmess_cnt == 1);
     }
     
     std::println("test_parse_json passed.");
 }
 
 void test_rules() {
-    std::string filename = fs::exists("references/original.json") ? "references/original.json" :
-                          (fs::exists("../references/original.json") ? "../references/original.json" : "");
-    if (filename.empty()) return;
+    std::string filename = find_test_file("references/original.json");
+    assert(!filename.empty() && "references/original.json fixture not found");
 
     std::ifstream file(filename);
-    if (!file.is_open()) return;
+    assert(file.is_open());
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string content = buffer.str();
@@ -416,10 +447,12 @@ void test_balancers_and_xray_jsons() {
     std::println("test_balancers_and_xray_jsons passed.");
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    g_argv0 = (argc > 0) ? argv[0] : nullptr;
     std::println("Running tests...");
     test_base64();
     test_parse_uri();
+    test_parse_json();
     test_rules();
     test_clash_to_singbox_and_xray();
     test_xray_grpc_roundtrip();

@@ -1,0 +1,70 @@
+# GitLab CI/CD configuration for SubBridge
+# Implements build, test, and deploy stages matching project structure
+
+default:
+  image: ubuntu:24.04
+
+variables:
+  DEBIAN_FRONTEND: noninteractive
+  CC: gcc-14
+  CXX: g++-14
+
+stages:
+  - build
+  - test
+  - deploy
+
+build-job:
+  stage: build
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq gcc-14 g++-14 cmake ninja-build libcurl4-openssl-dev python3
+  script:
+    - echo "Compiling the code..."
+    - cmake --preset ci
+    - cmake --build --preset ci
+    - echo "Compile complete."
+  artifacts:
+    name: "sub_bridge-build-$CI_COMMIT_REF_SLUG"
+    paths:
+      - build/ci/
+    expire_in: 1 day
+
+unit-test-job:
+  stage: test
+  needs: [build-job]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq cmake libcurl4-openssl-dev python3
+  script:
+    - echo "Running unit tests..."
+    - ctest --preset ci --output-on-failure --no-tests=error
+    - echo "All unit tests passed successfully."
+
+lint-test-job:
+  stage: test
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq python3
+  script:
+    - echo "Linting code..."
+    - python3 -m py_compile tests/test_yaml.py
+    - test -f config.ini.example
+    - test -f CMakeLists.txt
+    - echo "No lint issues found."
+
+deploy-job:
+  stage: deploy
+  needs: [build-job, unit-test-job, lint-test-job]
+  environment: production
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq tar
+  script:
+    - echo "Deploying application..."
+    - mkdir -p package
+    - cp build/ci/sub_bridge package/
+    - cp config.ini.example package/
+    - tar -czf sub_bridge-linux-x64.tar.gz -C package .
+    - echo "Application successfully deployed."
+  artifacts:
+    name: "sub_bridge-linux-x64-$CI_COMMIT_REF_NAME"
+    paths:
+      - sub_bridge-linux-x64.tar.gz
+    expire_in: 30 days

@@ -80,4 +80,8 @@ def test():
     print("--- NAMES ---")
     print(raw_clash_names)
 
+    assert len(filtered_block) > 0, "Expected non-empty filtered block"
+    assert "Germany" in raw_clash_names, "Expected 'Germany' in clash names"
+    print("test_yaml.py passed.")
+
 test()
