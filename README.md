@@ -21,6 +21,7 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
     - `xray`: Base64-encoded V2Ray / Xray link list
     - `xray-one`: Single consolidated Xray JSON configuration
     - `xray-jsons`: Array of standalone Xray JSON configurations (`[...]`) containing balancers with `burstObservatory` and individual node configs
+    - `xray-mixed`: Plain-text balancer JSON configurations followed by server share links (`vless://`, `vmess://`, `trojan://`, etc.), without Base64 wrapping or a JSON array. Balancer members also remain available as individual links.
     - `v2ray`: Base64-encoded V2Ray link list
   - Full routing rule extraction and conversion between Xray/Sing-box rules and Clash rule sets.
 - **Smart Balancer Handling & Deduplication**:
@@ -114,7 +115,8 @@ force_balancer = false
 # Port 25505 -> Xray / V2Ray Share Links (Base64)
 # Port 25506 -> Xray Standalone Config JSON
 # Port 25507 -> Xray Configs Array JSON ([...])
-converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons
+# Port 25508 -> Xray balancer JSON configs + server share links (plain text)
+converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed
 ```
 
 ---
@@ -146,7 +148,7 @@ sudo ./sub_bridge --uninstall
 Convert any subscription URL or local file directly into a target configuration:
 ```bash
 # Syntax: ./sub_bridge --convert <target> <url_or_file> [output_file] [--force-balancer]
-# Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, v2ray
+# Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed, v2ray
 
 # Convert to Clash YAML
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml
@@ -160,9 +162,14 @@ Convert any subscription URL or local file directly into a target configuration:
 # Convert to native Xray JSONs Array ([...])
 ./sub_bridge --convert xray-jsons "https://example.com/sub" xray_configs.json
 
+# Convert balancers to JSON and individual servers to share links
+./sub_bridge --convert xray-mixed "https://example.com/sub" xray_mixed.txt
+
 # Force generation of SubBridge Auto balancer group
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml --force-balancer
 ```
+
+`xray-mixed` emits each balancer as a standalone (multi-line) JSON object, then one share link per server. Entries are separated by newlines, not commas. With no balancers, the output is only a plain link list. Use a client that supports mixed JSON/link subscriptions; use `xray-jsons` for a valid JSON array or `xray` for a Base64 link list.
 
 ### 4. Help & Version
 ```bash
@@ -175,6 +182,7 @@ When SubBridge is running, connect your proxy client directly to the built-in su
 ```text
 http://127.0.0.1:25500/sub?target=clash&url=http://127.0.0.1:25501
 http://127.0.0.1:25500/sub?target=xray-jsons&url=https://example.com/sub
+http://127.0.0.1:25500/sub?target=xray-mixed&url=https://example.com/sub
 http://127.0.0.1:25500/sub?target=clash&force_balancer=true&url=https://example.com/sub
 ```
 
@@ -190,6 +198,7 @@ ctest --preset release --output-on-failure
 
 Tests include:
 - `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
+- `XrayMixedTest`: Plain-text share links, mixed balancer JSON output, multiple balancers, and empty-input handling
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
 

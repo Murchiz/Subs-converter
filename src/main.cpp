@@ -575,13 +575,14 @@ void print_help(std::string_view prog_cmd) {
     std::println("  xray                              Base64-encoded V2Ray / Xray link list");
     std::println("  xray-one                          Single consolidated Xray JSON config");
     std::println("  xray-jsons                        Array of individual Xray JSON configs ([...])");
+    std::println("  xray-mixed                        Plain-text balancer JSON configs and server share links");
     std::println("  v2ray                             Base64-encoded V2Ray link list");
 }
 
 void run_convert(int argc, char **argv) {
     if (argc < 4) {
         std::println("Usage: sub_bridge --convert <target> <url> [output_file] [--force-balancer]");
-        std::println("Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, v2ray");
+        std::println("Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed, v2ray");
         return;
     }
     std::string target = argv[2];
@@ -635,6 +636,8 @@ void run_convert(int argc, char **argv) {
             out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, force_balancer);
         } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
             out_payload = gen_xray(all_proxies, "", all_rules);
+        } else if (target == "xray-mixed") {
+            out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
         } else if (target == "xray-jsons") {
             out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
         } else {

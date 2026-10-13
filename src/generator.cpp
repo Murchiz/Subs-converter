@@ -845,7 +845,7 @@ std::string gen_xray(const std::vector<Proxy>& proxies, std::string_view remarks
     return out;
 }
 
-std::string gen_v2ray(const std::vector<Proxy>& proxies) {
+static std::string gen_share_links(const std::vector<Proxy>& proxies) {
     std::string out;
     for (const auto& p : proxies) {
         if (!p.protocol[0]) continue;
@@ -915,7 +915,178 @@ std::string gen_v2ray(const std::vector<Proxy>& proxies) {
             out += uri;
         }
     }
-    return base64_encode(out);
+    return out;
+}
+
+std::string gen_v2ray(const std::vector<Proxy>& proxies) {
+    return base64_encode(gen_share_links(proxies));
+}
+
+static std::string gen_xray_balancer(const std::vector<Proxy>& proxies,
+                                     const Balancer& b,
+                                     const std::vector<Rule>& rules) {
+    std::string out;
+    std::string b_tag = b.name[0] ? sanitize_json(b.name) : "Super_Balancer";
+
+    out += "  {\n"
+           "    \"dns\": {\n"
+           "      \"servers\": [\n"
+           "        \"1.1.1.1\",\n"
+           "        \"1.0.0.1\"\n"
+           "      ],\n"
+           "      \"queryStrategy\": \"UseIP\"\n"
+           "    },\n"
+           "    \"routing\": {\n"
+           "      \"rules\": [\n";
+
+    bool first_r = true;
+    for (const auto& r : rules) {
+        if (!first_r) out += ",\n";
+        first_r = false;
+        out += "        {\n"
+               "          \"type\": \"field\",\n";
+        std::string_view r_out = r.outbound;
+        std::string tag;
+        if (r_out == "block" || r_out == "reject") tag = "block";
+        else if (r_out == "direct") tag = "direct";
+        else tag = "proxy";
+        out += std::format("          \"outboundTag\": \"{}\"", tag);
+
+        if (!r.protocols.empty()) {
+            out += ",\n          \"protocol\": [";
+            for (size_t k = 0; k < r.protocols.size(); k++) {
+                if (k > 0) out += ", ";
+                out += std::format("\"{}\"", sanitize_json(r.protocols[k]));
+            }
+            out += "]";
+        }
+        if (!r.domains.empty()) {
+            out += ",\n          \"domain\": [\n";
+            for (size_t k = 0; k < r.domains.size(); k++) {
+                if (k > 0) out += ",\n";
+                std::string_view d = r.domains[k];
+                if (d.starts_with("domain:")) d = d.substr(7);
+                if (d.starts_with("full:")) d = d.substr(5);
+                out += std::format("            \"{}\"", sanitize_json(d));
+            }
+            out += "\n          ]";
+        }
+        if (!r.ips.empty()) {
+            out += ",\n          \"ip\": [\n";
+            for (size_t k = 0; k < r.ips.size(); k++) {
+                if (k > 0) out += ",\n";
+                out += std::format("            \"{}\"", sanitize_json(r.ips[k]));
+            }
+            out += "\n          ]";
+        }
+        if (!r.port.empty()) {
+            out += std::format(",\n          \"port\": \"{}\"", sanitize_json(r.port));
+        }
+        out += "\n        }";
+    }
+
+    if (!first_r) out += ",\n";
+    out += std::format("        {{\n"
+                       "          \"type\": \"field\",\n"
+                       "          \"network\": \"tcp,udp\",\n"
+                       "          \"balancerTag\": \"{}\"\n"
+                       "        }}\n"
+                       "      ],\n"
+                       "      \"balancers\": [\n"
+                       "        {{\n"
+                       "          \"tag\": \"{}\",\n"
+                       "          \"selector\": [\n"
+                       "            \"proxy\"\n"
+                       "          ],\n"
+                       "          \"strategy\": {{\n"
+                       "            \"type\": \"leastPing\"\n"
+                       "          }},\n"
+                       "          \"fallbackTag\": \"direct\"\n"
+                       "        }}\n"
+                       "      ],\n", b_tag, b_tag);
+
+    out += "      \"domainMatcher\": \"hybrid\",\n"
+           "      \"domainStrategy\": \"IPIfNonMatch\"\n"
+           "    },\n"
+           "    \"inbounds\": [\n"
+           "      {\n"
+           "        \"tag\": \"socks\",\n"
+           "        \"port\": 10808,\n"
+           "        \"listen\": \"127.0.0.1\",\n"
+           "        \"protocol\": \"socks\",\n"
+           "        \"settings\": {\n"
+           "          \"udp\": true,\n"
+           "          \"auth\": \"noauth\"\n"
+           "        },\n"
+           "        \"sniffing\": {\n"
+           "          \"enabled\": true,\n"
+           "          \"routeOnly\": false,\n"
+           "          \"destOverride\": [\"http\", \"tls\", \"quic\"]\n"
+           "        }\n"
+           "      },\n"
+           "      {\n"
+           "        \"tag\": \"http\",\n"
+           "        \"port\": 10809,\n"
+           "        \"listen\": \"127.0.0.1\",\n"
+           "        \"protocol\": \"http\",\n"
+           "        \"settings\": {\n"
+           "          \"allowTransparent\": false\n"
+           "        },\n"
+           "        \"sniffing\": {\n"
+           "          \"enabled\": true,\n"
+           "          \"routeOnly\": false,\n"
+           "          \"destOverride\": [\"http\", \"tls\", \"quic\"]\n"
+           "        }\n"
+           "      }\n"
+           "    ],\n"
+           "    \"outbounds\": [\n";
+
+    std::vector<const Proxy*> member_proxies;
+    for (const auto& pname : b.proxies) {
+        for (const auto& p : proxies) {
+            if (pname == p.name) {
+                member_proxies.push_back(&p);
+                break;
+            }
+        }
+    }
+    if (member_proxies.empty()) {
+        for (const auto& p : proxies) {
+            member_proxies.push_back(&p);
+        }
+    }
+
+    for (size_t m = 0; m < member_proxies.size(); m++) {
+        std::string tag = (m == 0) ? "proxy" : std::format("proxy-{}", m + 1);
+        out += format_xray_proxy_outbound(*member_proxies[m], tag, "      ");
+        out += ",\n";
+    }
+
+    out += "      {\n"
+           "        \"tag\": \"direct\",\n"
+           "        \"protocol\": \"freedom\"\n"
+           "      },\n"
+           "      {\n"
+           "        \"tag\": \"block\",\n"
+           "        \"protocol\": \"blackhole\"\n"
+           "      }\n"
+           "    ],\n"
+           "    \"burstObservatory\": {\n"
+           "      \"pingConfig\": {\n"
+           "        \"timeout\": \"3s\",\n"
+           "        \"interval\": \"1m\",\n"
+           "        \"sampling\": 1,\n"
+           "        \"destination\": \"https://cp.cloudflare.com/generate_204\",\n"
+           "        \"connectivity\": \"\"\n"
+           "      },\n"
+           "      \"subjectSelector\": [\n"
+           "        \"proxy\"\n"
+           "      ]\n"
+           "    },\n";
+
+    out += std::format("    \"remarks\": \"{}\"\n"
+                       "  }}", sanitize_json(b.name));
+    return out;
 }
 
 std::string gen_xray_jsons(const std::vector<Proxy>& proxies,
@@ -928,166 +1099,7 @@ std::string gen_xray_jsons(const std::vector<Proxy>& proxies,
         if (!first_config) out += ",\n";
         first_config = false;
 
-        std::string b_tag = b.name[0] ? sanitize_json(b.name) : "Super_Balancer";
-
-        out += "  {\n"
-               "    \"dns\": {\n"
-               "      \"servers\": [\n"
-               "        \"1.1.1.1\",\n"
-               "        \"1.0.0.1\"\n"
-               "      ],\n"
-               "      \"queryStrategy\": \"UseIP\"\n"
-               "    },\n"
-               "    \"routing\": {\n"
-               "      \"rules\": [\n";
-
-        bool first_r = true;
-        for (const auto& r : rules) {
-            if (!first_r) out += ",\n";
-            first_r = false;
-            out += "        {\n"
-                   "          \"type\": \"field\",\n";
-            std::string_view r_out = r.outbound;
-            std::string tag;
-            if (r_out == "block" || r_out == "reject") tag = "block";
-            else if (r_out == "direct") tag = "direct";
-            else tag = "proxy";
-            out += std::format("          \"outboundTag\": \"{}\"", tag);
-
-            if (!r.protocols.empty()) {
-                out += ",\n          \"protocol\": [";
-                for (size_t k = 0; k < r.protocols.size(); k++) {
-                    if (k > 0) out += ", ";
-                    out += std::format("\"{}\"", sanitize_json(r.protocols[k]));
-                }
-                out += "]";
-            }
-            if (!r.domains.empty()) {
-                out += ",\n          \"domain\": [\n";
-                for (size_t k = 0; k < r.domains.size(); k++) {
-                    if (k > 0) out += ",\n";
-                    std::string_view d = r.domains[k];
-                    if (d.starts_with("domain:")) d = d.substr(7);
-                    if (d.starts_with("full:")) d = d.substr(5);
-                    out += std::format("            \"{}\"", sanitize_json(d));
-                }
-                out += "\n          ]";
-            }
-            if (!r.ips.empty()) {
-                out += ",\n          \"ip\": [\n";
-                for (size_t k = 0; k < r.ips.size(); k++) {
-                    if (k > 0) out += ",\n";
-                    out += std::format("            \"{}\"", sanitize_json(r.ips[k]));
-                }
-                out += "\n          ]";
-            }
-            if (!r.port.empty()) {
-                out += std::format(",\n          \"port\": \"{}\"", sanitize_json(r.port));
-            }
-            out += "\n        }";
-        }
-
-        if (!first_r) out += ",\n";
-        out += std::format("        {{\n"
-                           "          \"type\": \"field\",\n"
-                           "          \"network\": \"tcp,udp\",\n"
-                           "          \"balancerTag\": \"{}\"\n"
-                           "        }}\n"
-                           "      ],\n"
-                           "      \"balancers\": [\n"
-                           "        {{\n"
-                           "          \"tag\": \"{}\",\n"
-                           "          \"selector\": [\n"
-                           "            \"proxy\"\n"
-                           "          ],\n"
-                           "          \"strategy\": {{\n"
-                           "            \"type\": \"leastPing\"\n"
-                           "          }},\n"
-                           "          \"fallbackTag\": \"direct\"\n"
-                           "        }}\n"
-                           "      ],\n", b_tag, b_tag);
-
-        out += "      \"domainMatcher\": \"hybrid\",\n"
-               "      \"domainStrategy\": \"IPIfNonMatch\"\n"
-               "    },\n"
-               "    \"inbounds\": [\n"
-               "      {\n"
-               "        \"tag\": \"socks\",\n"
-               "        \"port\": 10808,\n"
-               "        \"listen\": \"127.0.0.1\",\n"
-               "        \"protocol\": \"socks\",\n"
-               "        \"settings\": {\n"
-               "          \"udp\": true,\n"
-               "          \"auth\": \"noauth\"\n"
-               "        },\n"
-               "        \"sniffing\": {\n"
-               "          \"enabled\": true,\n"
-               "          \"routeOnly\": false,\n"
-               "          \"destOverride\": [\"http\", \"tls\", \"quic\"]\n"
-               "        }\n"
-               "      },\n"
-               "      {\n"
-               "        \"tag\": \"http\",\n"
-               "        \"port\": 10809,\n"
-               "        \"listen\": \"127.0.0.1\",\n"
-               "        \"protocol\": \"http\",\n"
-               "        \"settings\": {\n"
-               "          \"allowTransparent\": false\n"
-               "        },\n"
-               "        \"sniffing\": {\n"
-               "          \"enabled\": true,\n"
-               "          \"routeOnly\": false,\n"
-               "          \"destOverride\": [\"http\", \"tls\", \"quic\"]\n"
-               "        }\n"
-               "      }\n"
-               "    ],\n"
-               "    \"outbounds\": [\n";
-
-        std::vector<const Proxy*> member_proxies;
-        for (const auto& pname : b.proxies) {
-            for (const auto& p : proxies) {
-                if (pname == p.name) {
-                    member_proxies.push_back(&p);
-                    break;
-                }
-            }
-        }
-        if (member_proxies.empty()) {
-            for (const auto& p : proxies) {
-                member_proxies.push_back(&p);
-            }
-        }
-
-        for (size_t m = 0; m < member_proxies.size(); m++) {
-            std::string tag = (m == 0) ? "proxy" : std::format("proxy-{}", m + 1);
-            out += format_xray_proxy_outbound(*member_proxies[m], tag, "      ");
-            out += ",\n";
-        }
-
-        out += "      {\n"
-               "        \"tag\": \"direct\",\n"
-               "        \"protocol\": \"freedom\"\n"
-               "      },\n"
-               "      {\n"
-               "        \"tag\": \"block\",\n"
-               "        \"protocol\": \"blackhole\"\n"
-               "      }\n"
-               "    ],\n"
-               "    \"burstObservatory\": {\n"
-               "      \"pingConfig\": {\n"
-               "        \"timeout\": \"3s\",\n"
-               "        \"interval\": \"1m\",\n"
-               "        \"sampling\": 1,\n"
-               "        \"destination\": \"https://cp.cloudflare.com/generate_204\",\n"
-               "        \"connectivity\": \"\"\n"
-               "      },\n"
-               "      \"subjectSelector\": [\n"
-               "        \"proxy\"\n"
-               "      ]\n"
-               "    },\n";
-
-        out += std::format("    \"remarks\": \"{}\"\n"
-                           "  }}", sanitize_json(b.name));
+        out += gen_xray_balancer(proxies, b, rules);
     }
 
     for (const auto& p : proxies) {
@@ -1117,5 +1129,18 @@ std::string gen_xray_jsons(const std::vector<Proxy>& proxies,
     }
 
     out += "\n]\n";
+    return out;
+}
+
+std::string gen_xray_mixed(const std::vector<Proxy>& proxies,
+                           const std::vector<Balancer>& balancers,
+                           const std::vector<Rule>& rules) {
+    // Unlike xray-jsons, this is a text subscription, not a JSON array.
+    std::string out;
+    for (const auto& b : balancers) {
+        out += gen_xray_balancer(proxies, b, rules);
+        out += '\n';
+    }
+    out += gen_share_links(proxies);
     return out;
 }

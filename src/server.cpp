@@ -530,6 +530,9 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
         } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
             out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
             content_type = converted_content_type(target);
+        } else if (target == "xray-mixed") {
+            out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
+            content_type = converted_content_type(target);
         } else if (target == "xray-jsons") {
             out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
             content_type = converted_content_type(target);

@@ -88,6 +88,15 @@ add_executable(test_parser ${TEST_SOURCES_PARSER})
 add_test(NAME ParserTest COMMAND test_parser)
 set_tests_properties(ParserTest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# Mixed Xray subscription generation
+add_executable(test_xray_mixed
+    tests/test_xray_mixed.cpp
+    src/globals.cpp
+    src/utils.cpp
+    src/generator.cpp
+)
+add_test(NAME XrayMixedTest COMMAND test_xray_mixed)
+
 # YAML test
 set(TEST_SOURCES_YAML
     tests/test_yaml.cpp

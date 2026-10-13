@@ -11,3 +11,5 @@ std::string gen_v2ray(const std::vector<Proxy>& proxies);
 std::string gen_xray(const std::vector<Proxy>& proxies, std::string_view remarks = "", const std::vector<Rule>& rules = {});
 std::string gen_xray_jsons(const std::vector<Proxy>& proxies, const std::vector<Balancer>& balancers = {}, const std::vector<Rule>& rules = {});
 
+// Plain-text balancer JSON objects followed by newline-separated share links.
+std::string gen_xray_mixed(const std::vector<Proxy>& proxies, const std::vector<Balancer>& balancers = {}, const std::vector<Rule>& rules = {});
