@@ -40,6 +40,7 @@ user_agent1 = v2rayng
 #   - http://127.0.0.1:25501 (Raw / Merged V2Ray Base64)
 #   - http://127.0.0.1:25502 (Clash / Mihomo YAML)
 #   - http://127.0.0.1:25503 (Sing-Box Android JSON)
+# v2rayNG: use xray-jsons for balancers; it cannot import balancer JSON mixed with share links.
 # Supported targets: clash, singbox, singbox-pc, xray, xray-one, xray-jsons, xray-mixed
 converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed
 

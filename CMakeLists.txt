@@ -93,6 +93,7 @@ add_executable(test_xray_mixed
     tests/test_xray_mixed.cpp
     src/globals.cpp
     src/utils.cpp
+    src/parser.cpp
     src/generator.cpp
 )
 add_test(NAME XrayMixedTest COMMAND test_xray_mixed)

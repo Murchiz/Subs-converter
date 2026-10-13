@@ -869,8 +869,13 @@ static std::string gen_share_links(const std::vector<Proxy>& proxies) {
             if (net == "grpc") {
                 uri += std::format("serviceName={}&", url_encode(p.path));
                 uri += std::format("mode={}&", p.mode[0] ? p.mode : "gun");
-            } else if (p.path[0]) {
-                uri += std::format("path={}&", url_encode(p.path));
+            } else {
+                if (p.path[0]) uri += std::format("path={}&", url_encode(p.path));
+                // XHTTP extra settings depend on the selected mode (for example,
+                // uplinkDataPlacement=header requires packet-up). Do not drop it.
+                if (net == "xhttp" && p.mode[0]) {
+                    uri += std::format("mode={}&", url_encode(p.mode));
+                }
             }
 
             if (p.alpn[0]) uri += std::format("alpn={}&", url_encode(p.alpn));

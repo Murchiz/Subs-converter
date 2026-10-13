@@ -1,4 +1,5 @@
 #include "generator.h"
+#include "parser.h"
 #include "utils.h"
 #include <cassert>
 #include <cstring>
@@ -103,7 +104,78 @@ void test_xray_mixed_balancers() {
     std::println("test_xray_mixed_balancers passed.");
 }
 
+void test_xhttp_share_links() {
+    // This combination reproduces the reported Xray validation error if mode
+    // is lost: header placement is only valid in packet-up mode.
+    const std::string_view config = R"json({
+      "remarks": "XHTTP packet up",
+      "outbounds": [{
+        "tag": "proxy",
+        "protocol": "vless",
+        "settings": {"vnext": [{"address": "192.0.2.10", "port": 443,
+          "users": [{"id": "00000000-0000-0000-0000-000000000001"}]}]},
+        "streamSettings": {
+          "network": "xhttp", "security": "tls",
+          "tlsSettings": {"serverName": "example.com"},
+          "xhttpSettings": {
+            "host": "example.com", "path": "/upload?a=1&b=2",
+            "mode": "packet-up",
+            "extra": {"uplinkDataPlacement":"header","uplinkDataKey":"X-Data"}
+          }
+        }
+      }]
+    })json";
+    Proxy p = parse_xray_json(config);
+    assert(std::string_view(p.type) == "xhttp");
+    assert(std::string_view(p.mode) == "packet-up");
+    assert(std::string_view(p.extra).contains("\"uplinkDataPlacement\":\"header\""));
+
+    for (const char* protocol : {"vless", "trojan"}) {
+        strcpy(p.protocol, protocol);
+        for (const char* mode : {"packet-up", "stream-up", "stream-one", "auto"}) {
+            strcpy(p.mode, mode);
+            std::string link = gen_xray_mixed({p});
+            assert(link.contains("type=xhttp&"));
+            assert(link.contains(std::string("mode=") + mode + "&"));
+            assert(link.contains("path=%2Fupload%3Fa%3D1%26b%3D2&"));
+            assert(link.contains("extra=" + url_encode(p.extra)));
+            // The same fix must reach the Base64 xray/v2ray targets.
+            assert(link == base64_decode(gen_v2ray({p})));
+            link.pop_back(); // Strip the subscription line separator.
+            Proxy roundtrip = parse_uri(link);
+            assert(std::string_view(roundtrip.mode) == mode);
+            assert(std::string_view(roundtrip.extra) == p.extra);
+            assert(std::string_view(roundtrip.path) == p.path);
+            assert(std::string_view(roundtrip.host) == p.host);
+            assert(std::string_view(roundtrip.sni) == p.sni);
+            if (std::string_view(mode) == "packet-up") {
+                std::string json = gen_xray({roundtrip});
+                assert(json.contains("\"mode\": \"packet-up\""));
+                assert(json.contains("\"uplinkDataPlacement\":\"header\""));
+            }
+        }
+    }
+
+    // Mode must not depend on whether the optional path was supplied.
+    p.path[0] = '\0';
+    strcpy(p.mode, "packet-up");
+    assert(gen_xray_mixed({p}).contains("mode=packet-up&"));
+    // Do not invent a mode for nodes that leave it unspecified.
+    p.mode[0] = '\0';
+    assert(!gen_xray_mixed({p}).contains("mode="));
+
+    // Leave the existing gRPC mode/serviceName handling intact.
+    strcpy(p.type, "grpc");
+    strcpy(p.path, "grpc-service");
+    p.extra[0] = '\0';
+    assert(gen_xray_mixed({p}).contains("serviceName=grpc-service&mode=gun"));
+    strcpy(p.mode, "multi");
+    assert(gen_xray_mixed({p}).contains("serviceName=grpc-service&mode=multi"));
+    std::println("test_xhttp_share_links passed.");
+}
+
 int main() {
     test_xray_mixed_links();
     test_xray_mixed_balancers();
+    test_xhttp_share_links();
 }

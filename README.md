@@ -171,6 +171,16 @@ Convert any subscription URL or local file directly into a target configuration:
 
 `xray-mixed` emits each balancer as a standalone (multi-line) JSON object, then one share link per server. Entries are separated by newlines, not commas. With no balancers, the output is only a plain link list. Use a client that supports mixed JSON/link subscriptions; use `xray-jsons` for a valid JSON array or `xray` for a Base64 link list.
 
+#### v2rayNG compatibility
+
+**Use `xray-jsons` in v2rayNG when you need balancers.** Its subscription importer tries share links first and only attempts custom JSON import if no links were imported. Consequently, raw balancer JSON mixed with share links is skipped, even if the JSON is valid. Neither compacting the JSON nor Base64-encoding the mixture makes that format compatible. This behavior is visible in v2rayNG's [subscription importer](https://github.com/2dust/v2rayNG/blob/e1b73f2fa8487dfc303da52d109719c1e32386b4/V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt#L588-L597).
+
+For example, use `/sub?target=xray-jsons&url=...`, or replace `xray-mixed` with `xray-jsons` in your route's `converts` list. This imports both balancers and individual servers as JSON profiles, rather than editable share-link profiles.
+
+v2rayNG may log `bad base-64` / `Failed to decode standard base64` before falling back to plain-text subscription parsing. That message alone does not prove the subscription failed. For links only, `xray` supplies the Base64-encoded format. For balancers and nodes together, use `xray-jsons` rather than wrapping `xray-mixed` in Base64.
+
+XHTTP VLESS/Trojan links preserve both `mode` and URL-encoded `extra`. In particular, `uplinkDataPlacement=header` requires `mode=packet-up`; dropping the mode can cause Xray to reject the resulting configuration.
+
 ### 4. Help & Version
 ```bash
 ./sub_bridge --help
@@ -198,7 +208,7 @@ ctest --preset release --output-on-failure
 
 Tests include:
 - `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
-- `XrayMixedTest`: Plain-text share links, mixed balancer JSON output, multiple balancers, and empty-input handling
+- `XrayMixedTest`: Plain-text share links, mixed balancer JSON output, multiple balancers, empty-input handling, and XHTTP mode/extra round trips
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
 
