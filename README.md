@@ -21,11 +21,12 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
     - `xray`: Base64-encoded V2Ray / Xray link list
     - `xray-one`: Single consolidated Xray JSON configuration
     - `xray-jsons`: Array of standalone Xray JSON configurations (`[...]`) containing balancers with `burstObservatory` and individual node configs
-    - `xray-mixed`: Plain-text balancer JSON configurations followed by server share links (`vless://`, `vmess://`, `trojan://`, etc.), without Base64 wrapping or a JSON array. Balancer members also remain available as individual links.
+    - `xray-mixed` (**experimental; not a verified client import format**): Raw balancer JSON objects followed by server share links. Reported to omit balancers on import in Happ and v2rayNG. Use `xray-jsons` for JSON subscriptions.
     - `v2ray`: Base64-encoded V2Ray link list
   - Full routing rule extraction and conversion between Xray/Sing-box rules and Clash rule sets.
 - **Smart Balancer Handling & Deduplication**:
-  - Automatically identifies and preserves upstream subscription balancers (e.g. leastPing urltest groups).
+  - Automatically identifies upstream subscription balancers (e.g. leastPing urltest groups).
+  - `xray-jsons` preserves original Xray balancer configs intact, including strategy settings (such as `leastLoad`), selectors, routing, fallback and observatory settings. Rules from other aggregated subscriptions do not overwrite those configs.
   - Eliminates duplicate node tags (e.g. `proxy-2`) by mapping balancer members to their respective proxy nodes.
   - Intelligently omits redundant auto-balancer groups if upstream balancers already cover all nodes.
   - Optional `force_balancer` flag to force SubBridge's generic `Auto` group alongside upstream balancers.
@@ -115,8 +116,8 @@ force_balancer = false
 # Port 25505 -> Xray / V2Ray Share Links (Base64)
 # Port 25506 -> Xray Standalone Config JSON
 # Port 25507 -> Xray Configs Array JSON ([...])
-# Port 25508 -> Xray balancer JSON configs + server share links (plain text)
-converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed
+# Experimental xray-mixed is opt-in and is not a verified client import format.
+converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons
 ```
 
 ---
@@ -162,22 +163,20 @@ Convert any subscription URL or local file directly into a target configuration:
 # Convert to native Xray JSONs Array ([...])
 ./sub_bridge --convert xray-jsons "https://example.com/sub" xray_configs.json
 
-# Convert balancers to JSON and individual servers to share links
+# Experimental raw JSON/link concatenation (not a verified client import format)
 ./sub_bridge --convert xray-mixed "https://example.com/sub" xray_mixed.txt
 
 # Force generation of SubBridge Auto balancer group
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml --force-balancer
 ```
 
-`xray-mixed` emits each balancer as a standalone (multi-line) JSON object, then one share link per server. Entries are separated by newlines, not commas. With no balancers, the output is only a plain link list. Use a client that supports mixed JSON/link subscriptions; use `xray-jsons` for a valid JSON array or `xray` for a Base64 link list.
+#### Mixed-format status
 
-#### v2rayNG compatibility
+**The current `xray-mixed` payload is experimental, not a verified client import format.** It concatenates standalone JSON objects and URI lines. Each component can be valid on its own while the complete response is neither a valid JSON document nor a URI-only subscription. Reports of missing balancers include both Happ and v2rayNG; this is an unresolved output-format problem in the converter, not a client-specific defect.
 
-**Use `xray-jsons` in v2rayNG when you need balancers.** Its subscription importer tries share links first and only attempts custom JSON import if no links were imported. Consequently, raw balancer JSON mixed with share links is skipped, even if the JSON is valid. Neither compacting the JSON nor Base64-encoding the mixture makes that format compatible. This behavior is visible in v2rayNG's [subscription importer](https://github.com/2dust/v2rayNG/blob/e1b73f2fa8487dfc303da52d109719c1e32386b4/V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt#L588-L597).
+The automated tests validate generated components and preservation of upstream settings, **not successful client imports**. No alternative mixed framing or Base64 wrapper has been validated. `xray-mixed` is therefore not included in the recommended `converts` list.
 
-For example, use `/sub?target=xray-jsons&url=...`, or replace `xray-mixed` with `xray-jsons` in your route's `converts` list. This imports both balancers and individual servers as JSON profiles, rather than editable share-link profiles.
-
-v2rayNG may log `bad base-64` / `Failed to decode standard base64` before falling back to plain-text subscription parsing. That message alone does not prove the subscription failed. For links only, `xray` supplies the Base64-encoded format. For balancers and nodes together, use `xray-jsons` rather than wrapping `xray-mixed` in Base64.
+For one JSON subscription containing balancers and individual server configs, use `/sub?target=xray-jsons&url=...` or `converts = xray-jsons`. Individual servers are JSON profiles in that format, not URI entries. Use `xray` for a Base64-encoded link-only subscription. Neither is advertised as implementing the originally requested mixed JSON/link import behavior.
 
 XHTTP VLESS/Trojan links preserve both `mode` and URL-encoded `extra`. In particular, `uplinkDataPlacement=header` requires `mode=packet-up`; dropping the mode can cause Xray to reject the resulting configuration.
 
@@ -208,7 +207,8 @@ ctest --preset release --output-on-failure
 
 Tests include:
 - `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
-- `XrayMixedTest`: Plain-text share links, mixed balancer JSON output, multiple balancers, empty-input handling, and XHTTP mode/extra round trips
+- `XrayMixedTest`: Component generation, empty-input handling, XHTTP mode/extra round trips, and upstream balancer preservation when aggregating with unrelated gRPC nodes
+- `XrayFidelityTest`: Offline CLI validation using an independent JSON parser and sanitized `leastLoad`/gRPC Reality fixtures; not a client import test
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
 

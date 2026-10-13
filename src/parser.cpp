@@ -855,6 +855,7 @@ std::vector<Balancer> parse_balancers(std::string_view decoded, const std::vecto
                 Balancer b{};
                 safe_strncpy(b.name, remarks.c_str());
                 safe_strncpy(b.type, "url-test");
+                b.xray_config = std::string(config_obj);
 
                 size_t outbounds_pos = config_obj.find("\"outbounds\"");
                 if (outbounds_pos != std::string_view::npos) {

@@ -930,6 +930,10 @@ std::string gen_v2ray(const std::vector<Proxy>& proxies) {
 static std::string gen_xray_balancer(const std::vector<Proxy>& proxies,
                                      const Balancer& b,
                                      const std::vector<Rule>& rules) {
+    // Preserve source-local strategy/settings, selectors, routing and probes.
+    // Only synthesize a config for groups originating in other formats.
+    if (!b.xray_config.empty()) return b.xray_config;
+
     std::string out;
     std::string b_tag = b.name[0] ? sanitize_json(b.name) : "Super_Balancer";
 

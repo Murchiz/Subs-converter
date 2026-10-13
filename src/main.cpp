@@ -575,7 +575,7 @@ void print_help(std::string_view prog_cmd) {
     std::println("  xray                              Base64-encoded V2Ray / Xray link list");
     std::println("  xray-one                          Single consolidated Xray JSON config");
     std::println("  xray-jsons                        Array of individual Xray JSON configs ([...])");
-    std::println("  xray-mixed                        Plain-text balancer JSON configs and server share links");
+    std::println("  xray-mixed                        Experimental raw JSON + links (client import unverified)");
     std::println("  v2ray                             Base64-encoded V2Ray link list");
 }
 

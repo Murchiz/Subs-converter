@@ -116,6 +116,9 @@ struct Balancer {
     char name[128]{};
     char type[32]{};
     std::vector<std::string> proxies{};
+    // Retain upstream Xray configs intact for JSON output. The normalized
+    // member list alone cannot represent strategies, selectors or routing.
+    std::string xray_config{};
 };
 
 struct Rule {

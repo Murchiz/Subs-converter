@@ -97,6 +97,7 @@ add_executable(test_xray_mixed
     src/generator.cpp
 )
 add_test(NAME XrayMixedTest COMMAND test_xray_mixed)
+set_tests_properties(XrayMixedTest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # YAML test
 set(TEST_SOURCES_YAML
@@ -115,6 +116,8 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME PythonYamlTest COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/test_yaml.py)
     set_tests_properties(PythonYamlTest PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_test(NAME XrayFidelityTest COMMAND Python3::Interpreter
+        ${CMAKE_SOURCE_DIR}/tests/test_xray_fidelity.py $<TARGET_FILE:sub_bridge>)
 endif()
 
 # Ensure test fixtures are copied to build directory for direct binary execution

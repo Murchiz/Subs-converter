@@ -2,6 +2,8 @@
 #include "parser.h"
 #include "utils.h"
 #include <cassert>
+#include <fstream>
+#include <iterator>
 #include <cstring>
 #include <string_view>
 
@@ -174,8 +176,56 @@ void test_xhttp_share_links() {
     std::println("test_xhttp_share_links passed.");
 }
 
+static std::string read_fixture(const char* name) {
+    std::ifstream input(std::string("tests/reference/") + name);
+    assert(input.is_open());
+    std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    const auto last = text.find_last_not_of(" \t\r\n");
+    assert(last != std::string::npos);
+    text.resize(last + 1);
+    return text;
+}
+
+void test_upstream_balancer_fidelity() {
+    const std::string source = read_fixture("leastload_balancer.json");
+    std::vector<Proxy> members;
+    std::vector<Balancer> balancers;
+    std::vector<Rule> rules;
+    parse_subscription(source, members, balancers, rules);
+    assert(members.size() == 4);
+    assert(balancers.size() == 1);
+
+    // Balancers from a different provider must not depend on the standalone
+    // node list, or be rebuilt as leastPing with their original settings lost.
+    const Proxy standalone = parse_uri(read_fixture("grpc_reality_uri.txt"));
+    assert(std::string_view(standalone.type) == "grpc");
+    assert(std::string_view(standalone.path) == "synthetic-grpc");
+    assert(std::string_view(standalone.mode) == "gun");
+    assert(std::string_view(standalone.security) == "reality");
+    assert(std::string_view(standalone.sni) == "example.net");
+    assert(gen_xray_jsons({}, balancers) == "[\n" + source + "\n]\n");
+    const std::string links = base64_decode(gen_v2ray({standalone}));
+    assert(links.starts_with("vless://"));
+    assert(links.contains("serviceName=synthetic-grpc&mode=gun"));
+    // This checks component fidelity only, not client import compatibility.
+    assert(gen_xray_mixed({standalone}, balancers, rules) == source + "\n" + links);
+
+    // Neither aggregation with other nodes nor unrelated rules may overwrite
+    // an upstream balancer's routing, selectors, strategy or observatory.
+    members.push_back(standalone);
+    Rule unrelated{};
+    strcpy(unrelated.outbound, "block");
+    unrelated.domains = {"unrelated.example"};
+    rules.push_back(unrelated);
+    assert(gen_xray_jsons(members, balancers, rules).starts_with("[\n" + source + ",\n"));
+    balancers.push_back(balancers[0]);
+    assert(gen_xray_jsons({}, balancers) == "[\n" + source + ",\n" + source + "\n]\n");
+    std::println("test_upstream_balancer_fidelity passed.");
+}
+
 int main() {
     test_xray_mixed_links();
     test_xray_mixed_balancers();
     test_xhttp_share_links();
+    test_upstream_balancer_fidelity();
 }
