@@ -11,6 +11,7 @@
 #include <format>
 #include <string_view>
 #include <algorithm>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 
@@ -579,11 +580,11 @@ void print_help(std::string_view prog_cmd) {
     std::println("  v2ray                             Base64-encoded V2Ray link list");
 }
 
-void run_convert(int argc, char **argv) {
+int run_convert(int argc, char **argv) {
     if (argc < 4) {
         std::println("Usage: sub_bridge --convert <target> <url> [output_file] [--force-balancer]");
         std::println("Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed, v2ray");
-        return;
+        return 1;
     }
     std::string target = argv[2];
     std::string url = argv[3];
@@ -627,27 +628,35 @@ void run_convert(int argc, char **argv) {
         }
     }
 
+    int exit_code = 1;
     if (success_count > 0) {
-        if (target == "clash") {
-            out_payload = gen_clash(all_proxies, all_rules, all_balancers, force_balancer);
-        } else if (target == "singbox-pc" || target == "sing-box-pc") {
-            out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, force_balancer);
-        } else if (target == "singbox-android" || target == "sing-box-android") {
-            out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, force_balancer);
-        } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
-            out_payload = gen_xray(all_proxies, "", all_rules);
-        } else if (target == "xray-mixed") {
-            out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
-        } else if (target == "xray-jsons") {
-            out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
-        } else {
-            out_payload = gen_v2ray(all_proxies);
+        try {
+            if (target == "clash") {
+                out_payload = gen_clash(all_proxies, all_rules, all_balancers, force_balancer);
+            } else if (target == "singbox-pc" || target == "sing-box-pc") {
+                out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, force_balancer);
+            } else if (target == "singbox-android" || target == "sing-box-android") {
+                out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, force_balancer);
+            } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
+                out_payload = gen_xray(all_proxies, "", all_rules);
+            } else if (target == "xray-mixed") {
+                out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
+            } else if (target == "xray-jsons") {
+                out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
+            } else {
+                out_payload = gen_v2ray(all_proxies);
+            }
+        } catch (const std::invalid_argument& e) {
+            std::println(stderr, "Conversion failed: {}", e.what());
+            mem_free(body);
+            return 1;
         }
 
         std::ofstream out_file(outfile, std::ios::binary);
         if (out_file.is_open()) {
             out_file.write(out_payload.data(), out_payload.length());
             std::println("Successfully converted to {}", outfile);
+            exit_code = 0;
         } else {
             std::println("Error writing to {}", outfile);
         }
@@ -655,6 +664,7 @@ void run_convert(int argc, char **argv) {
         std::println("Error fetching URL");
     }
     mem_free(body);
+    return exit_code;
 }
 
 int main(int argc, char **argv) {
@@ -711,8 +721,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (iequals(a, "--convert") || iequals(a, "-convert") || iequals(a, "/convert")) {
-            run_convert(argc, argv);
-            return 0;
+            return run_convert(argc, argv);
         }
 
         print_help(prog_cmd);

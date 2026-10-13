@@ -18,6 +18,8 @@ std::string base64_encode(std::string_view in);
 std::string url_decode(std::string_view str);
 std::string url_encode(std::string_view str);
 std::string json_extract_string(std::string_view json, std::string_view key);
+// Extract a top-level object member, respecting nested objects and quoted strings.
+std::string_view json_extract_object(std::string_view json, std::string_view key);
 int json_extract_int(std::string_view json, std::string_view key);
 std::string sanitize_json(std::string_view str);
 std::string decode_json_string(std::string_view str);

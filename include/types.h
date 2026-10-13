@@ -154,6 +154,8 @@ struct Proxy {
     char obfs_pass[128]{};
     char up[32]{};
     char down[32]{};
+    // Native Xray Hysteria stream options that have no lossless generic mapping.
+    std::string xray_stream_settings{};
 };
 
 extern Route g_Routes[64];

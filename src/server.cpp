@@ -12,6 +12,7 @@
 #include <string_view>
 #include <algorithm>
 #include <memory>
+#include <stdexcept>
 
 #ifndef _WIN32
 #include <curl/curl.h>
@@ -518,29 +519,42 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
 
     if (success_count > 0) {
         std::string content_type;
-        if (target == "clash") {
-            out_payload = gen_clash(all_proxies, all_rules, all_balancers, source_rt->force_balancer);
-            content_type = converted_content_type(target);
-        } else if (target == "singbox-pc" || target == "sing-box-pc") {
-            out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, source_rt->force_balancer);
-            content_type = converted_content_type(target);
-        } else if (target == "singbox-android" || target == "sing-box-android") {
-            out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, source_rt->force_balancer);
-            content_type = converted_content_type(target);
-        } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
-            out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
-            content_type = converted_content_type(target);
-        } else if (target == "xray-mixed") {
-            out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
-            content_type = converted_content_type(target);
-        } else if (target == "xray-jsons") {
-            out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
-            content_type = converted_content_type(target);
-        } else if (target == "xray" || target == "v2ray" || !target.empty()) {
-            out_payload = gen_v2ray(all_proxies);
-            content_type = converted_content_type(target);
-        } else {
-            content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
+        try {
+            if (target == "clash") {
+                out_payload = gen_clash(all_proxies, all_rules, all_balancers, source_rt->force_balancer);
+                content_type = converted_content_type(target);
+            } else if (target == "singbox-pc" || target == "sing-box-pc") {
+                out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, source_rt->force_balancer);
+                content_type = converted_content_type(target);
+            } else if (target == "singbox-android" || target == "sing-box-android") {
+                out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, source_rt->force_balancer);
+                content_type = converted_content_type(target);
+            } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
+                out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
+                content_type = converted_content_type(target);
+            } else if (target == "xray-mixed") {
+                out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
+                content_type = converted_content_type(target);
+            } else if (target == "xray-jsons") {
+                out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
+                content_type = converted_content_type(target);
+            } else if (target == "xray" || target == "v2ray" || !target.empty()) {
+                out_payload = gen_v2ray(all_proxies);
+                content_type = converted_content_type(target);
+            } else {
+                content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
+            }
+        } catch (const std::invalid_argument& e) {
+            const std::string message = std::string(e.what()) + "\n";
+            const std::string response = std::format(
+                "HTTP/1.1 422 Unprocessable Content\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                "Content-Length: {}\r\nConnection: close\r\n\r\n{}", message.size(), message);
+            send(c, response.data(), static_cast<int>(response.size()), 0);
+            logm("  [FAIL] Port %d (target=%s) -> 422 Conversion Failed: %s\n\n",
+                 log_port, target.c_str(), e.what());
+            mem_free(body);
+            return;
         }
 
         apply_route_name(meta, source_rt->name);

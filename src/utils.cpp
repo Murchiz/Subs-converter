@@ -184,6 +184,45 @@ std::string json_extract_string(std::string_view json, std::string_view key) {
     return "";
 }
 
+std::string_view json_extract_object(std::string_view json, std::string_view key) {
+    auto string_end = [&](size_t start) {
+        for (size_t i = start + 1; i < json.size(); ++i) {
+            if (json[i] == '\\') ++i;
+            else if (json[i] == '"') return i;
+        }
+        return std::string_view::npos;
+    };
+    int depth = 0;
+    for (size_t i = 0; i < json.size(); ++i) {
+        if (json[i] == '{') ++depth;
+        else if (json[i] == '}') --depth;
+        else if (json[i] == '"') {
+            const size_t end = string_end(i);
+            if (end == std::string_view::npos) return {};
+            if (depth == 1 && json.substr(i + 1, end - i - 1) == key) {
+                size_t start = json.find_first_not_of(" \t\r\n", end + 1);
+                if (start != std::string_view::npos && json[start] == ':') {
+                    start = json.find_first_not_of(" \t\r\n", start + 1);
+                    if (start == std::string_view::npos || json[start] != '{') return {};
+                    int object_depth = 0;
+                    for (size_t j = start; j < json.size(); ++j) {
+                        if (json[j] == '"') {
+                            j = string_end(j);
+                            if (j == std::string_view::npos) return {};
+                        } else if (json[j] == '{') ++object_depth;
+                        else if (json[j] == '}' && --object_depth == 0) {
+                            return json.substr(start, j - start + 1);
+                        }
+                    }
+                    return {};
+                }
+            }
+            i = end;
+        }
+    }
+    return {};
+}
+
 int json_extract_int(std::string_view json, std::string_view key) {
     std::string pattern = std::format("\"{}\"", key);
     size_t pos = json.find(pattern);

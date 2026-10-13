@@ -3,6 +3,7 @@
 #include <cstring>
 #include <format>
 #include <string_view>
+#include <stdexcept>
 
 std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>& rules, const std::vector<Balancer>& balancers, bool force_balancer) {
     std::string out = "mixed-port: 7890\n"
@@ -589,13 +590,23 @@ std::string gen_singbox(const std::vector<Proxy>& proxies, std::string_view plat
 
 static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view tag, std::string_view indent = "    ") {
     std::string proto = p.protocol;
-    if (proto == "hy2" || proto == "hysteria2" || proto == "hysteria") proto = "vless";
+    const bool is_hysteria2 = proto == "hy2" || proto == "hysteria2";
+    if (proto == "hysteria") {
+        throw std::invalid_argument("Hysteria 1 is not supported by Xray JSON targets; use a Hysteria-capable target.");
+    }
+    if (is_hysteria2) proto = "hysteria";
 
     std::string out = std::format("{}{{\n"
                                   "{}  \"tag\": \"{}\",\n"
                                   "{}  \"protocol\": \"{}\",\n", indent, indent, tag, indent, proto);
 
-    if (proto == "vless" || proto == "vmess") {
+    if (is_hysteria2) {
+        out += std::format("{}  \"settings\": {{\n"
+                           "{}    \"address\": \"{}\",\n"
+                           "{}    \"port\": {},\n"
+                           "{}    \"version\": 2\n"
+                           "{}  }}", indent, indent, sanitize_json(p.server), indent, p.port, indent, indent);
+    } else if (proto == "vless" || proto == "vmess") {
         out += std::format("{}  \"settings\": {{\n"
                            "{}    \"vnext\": [\n"
                            "{}      {{\n"
@@ -651,13 +662,31 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
                            "{0}  }}", indent, p.server, p.port);
     }
 
-    std::string net = p.type[0] ? p.type : "tcp";
+    if (is_hysteria2 && !p.xray_stream_settings.empty()) {
+        out += std::format(",\n{}  \"streamSettings\": {}\n{}}}",
+                           indent, p.xray_stream_settings, indent);
+        return out;
+    }
+
+    std::string net = is_hysteria2 ? "hysteria" : (p.type[0] ? p.type : "tcp");
     if (net == "httpupgrade") net = "ws";
 
     out += std::format(",\n{}  \"streamSettings\": {{\n"
                        "{}    \"network\": \"{}\"", indent, indent, net);
 
-    if (net == "tcp") {
+    if (is_hysteria2) {
+        out += std::format(",\n{}    \"hysteriaSettings\": {{\n"
+                           "{}      \"version\": 2,\n"
+                           "{}      \"auth\": \"{}\"\n"
+                           "{}    }}", indent, indent, indent, sanitize_json(p.uuid), indent);
+        if (p.obfs[0]) {
+            if (std::string_view(p.obfs) != "salamander") {
+                throw std::invalid_argument("Unsupported Hysteria 2 obfuscation for Xray JSON targets.");
+            }
+            out += std::format(",\n{}    \"finalmask\": {{\"udp\": [{{\"type\": \"salamander\", "
+                               "\"settings\": {{\"password\": \"{}\"}}}}]}}", indent, sanitize_json(p.obfs_pass));
+        }
+    } else if (net == "tcp") {
         out += std::format(",\n{}    \"tcpSettings\": {{}}", indent);
     } else if (net == "ws") {
         out += std::format(",\n{}    \"wsSettings\": {{\n"
@@ -686,7 +715,7 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
         out += std::format("\n{}    }}", indent);
     }
 
-    std::string sec = p.security[0] ? p.security : "none";
+    std::string sec = is_hysteria2 ? "tls" : (p.security[0] ? p.security : "none");
     if (std::string_view(p.protocol) == "https" && sec == "none") sec = "tls";
 
     out += std::format(",\n{}    \"security\": \"{}\"", indent, sec);
@@ -702,9 +731,9 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
         out += std::format(",\n{}    \"tlsSettings\": {{\n"
                            "{}      \"serverName\": \"{}\"", indent, indent, p.sni[0] ? p.sni : p.server);
         if (p.fp[0]) out += std::format(",\n{}      \"fingerprint\": \"{}\"", indent, p.fp);
-        if (p.alpn[0]) {
+        if (p.alpn[0] || is_hysteria2) {
             out += std::format(",\n{}      \"alpn\": [", indent);
-            std::string_view alpn_str = p.alpn;
+            std::string_view alpn_str = p.alpn[0] ? p.alpn : "h3";
             size_t c = 0;
             bool first_a = true;
             while (c < alpn_str.length()) {

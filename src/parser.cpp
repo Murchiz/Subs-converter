@@ -193,7 +193,10 @@ static Proxy parse_xray_outbound_obj(std::string_view outbound, std::string_view
         proto = "hysteria2";
     }
     safe_strncpy(p.protocol, proto.c_str());
-    
+    if (proto == "hysteria2" && json_extract_string(outbound, "protocol") == "hysteria") {
+        p.xray_stream_settings = json_extract_object(outbound, "streamSettings");
+    }
+
     std::string tag = json_extract_string(outbound, "tag");
     if (!tag.empty() && tag != "proxy") {
         safe_strncpy(p.name, tag.c_str());

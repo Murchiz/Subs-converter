@@ -4,6 +4,7 @@
 #include <cassert>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <cstring>
 #include <string_view>
 
@@ -223,9 +224,65 @@ void test_upstream_balancer_fidelity() {
     std::println("test_upstream_balancer_fidelity passed.");
 }
 
+void test_hysteria2_xray_output() {
+    Proxy p = parse_xray_json(read_fixture("hysteria2_xray.json"));
+    assert(std::string_view(p.protocol) == "hysteria2");
+    assert(std::string_view(p.uuid) == "dummy-auth");
+    assert(p.xray_stream_settings.contains("\"enableSessionResumption\": false"));
+    assert(p.xray_stream_settings.contains("\"congestion\": \"bbr\""));
+    const std::string config = gen_xray({p});
+    assert(config.contains("\"protocol\": \"hysteria\""));
+    assert(config.contains(p.xray_stream_settings));
+    assert(!config.contains("\"vnext\""));
+    assert(!config.contains("\"protocol\": \"vless\""));
+
+    Balancer group{};
+    strcpy(group.name, "Synthetic group");
+    group.proxies = {p.name};
+    assert(gen_xray_jsons({p}, {group}).contains(p.xray_stream_settings));
+    assert(gen_xray_mixed({p}, {group}).contains(p.xray_stream_settings));
+
+    // URI and non-Xray inputs do not have a preserved stream. Synthesize the
+    // native Xray schema rather than writing a VLESS outbound or TCP transport.
+    for (const char* alias : {"hysteria2", "hy2"}) {
+        p = parse_uri("hysteria2://dummy-auth@192.0.2.91:443?sni=example.com#Synthetic");
+        strcpy(p.protocol, alias);
+        assert(p.xray_stream_settings.empty());
+        const auto generated = gen_xray({p});
+        assert(generated.contains("\"protocol\": \"hysteria\""));
+        assert(generated.contains("\"network\": \"hysteria\""));
+        assert(generated.contains("\"version\": 2"));
+        assert(generated.contains("\"auth\": \"dummy-auth\""));
+        assert(generated.contains("\"security\": \"tls\""));
+        assert(generated.contains("\"alpn\": [\"h3\"]"));
+    }
+    strcpy(p.protocol, "hysteria");
+    bool rejected = false;
+    try { (void)gen_xray({p}); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected); // Xray supports Hysteria 2, not Hysteria 1.
+    assert(base64_decode(gen_v2ray({p})).starts_with("hysteria://"));
+    std::println("test_hysteria2_xray_output passed.");
+}
+
+void test_json_object_extraction() {
+    // Nested same-name members and braces/escaped quotes inside strings must
+    // not affect locating and preserving a top-level streamSettings object.
+    const std::string_view object = R"({"auth":"escaped \" } { \\ end","nested":{"value":2}})";
+    const std::string json = "{\"other\":{\"streamSettings\":{}},\"streamSettings\":" +
+                             std::string(object) + ",\"tail\":true}";
+    assert(json_extract_object(json, "streamSettings") == object);
+    assert(json_extract_object(json, "absent").empty());
+    assert(json_extract_object("{\"streamSettings\":null}", "streamSettings").empty());
+    assert(json_extract_object("{\"streamSettings\":{", "streamSettings").empty());
+    std::println("test_json_object_extraction passed.");
+}
+
 int main() {
     test_xray_mixed_links();
     test_xray_mixed_balancers();
     test_xhttp_share_links();
     test_upstream_balancer_fidelity();
+    test_hysteria2_xray_output();
+    test_json_object_extraction();
 }

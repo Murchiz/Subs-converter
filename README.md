@@ -180,6 +180,14 @@ For one JSON subscription containing balancers and individual server configs, us
 
 XHTTP VLESS/Trojan links preserve both `mode` and URL-encoded `extra`. In particular, `uplinkDataPlacement=header` requires `mode=packet-up`; dropping the mode can cause Xray to reject the resulting configuration.
 
+#### Hysteria and Xray JSON output
+
+Hysteria 2 nodes use Xray's native `"protocol": "hysteria"` and `"network": "hysteria"`, with `version: 2` in both the outbound settings and `hysteriaSettings`. They are not converted to VLESS. When the source is a native Xray Hysteria 2 outbound, its complete `streamSettings` is retained, including authentication, TLS options, and `finalmask.quicParams`. URI/normalized Hysteria 2 inputs get native settings with TLS and a default `h3` ALPN; Salamander obfuscation is emitted as a UDP finalmask.
+
+This preserves the outbound, not the entire source profile: DNS, inbounds, and routing still follow the selected target's existing generation behavior. Xray-specific settings without share-link equivalents are preserved by JSON output, not guaranteed by link-only output.
+
+Xray's native Hysteria implementation requires version 2. Attempting to synthesize a Hysteria 1 node in an Xray JSON target now fails explicitly (nonzero CLI exit or HTTP 422), rather than silently generating VLESS. Hysteria 1 link output remains available through `xray`/`v2ray`.
+
 ### 4. Help & Version
 ```bash
 ./sub_bridge --help
@@ -208,7 +216,7 @@ ctest --preset release --output-on-failure
 Tests include:
 - `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
 - `XrayMixedTest`: Component generation, empty-input handling, XHTTP mode/extra round trips, and upstream balancer preservation when aggregating with unrelated gRPC nodes
-- `XrayFidelityTest`: Offline CLI validation using an independent JSON parser and sanitized `leastLoad`/gRPC Reality fixtures; not a client import test
+- `XrayFidelityTest`: Offline CLI validation using an independent JSON parser and sanitized `leastLoad`, Hysteria 2, and gRPC Reality fixtures; not a client import test
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
 
