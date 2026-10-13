@@ -1109,8 +1109,10 @@ std::vector<Rule> parse_xray_rules(std::string_view json) {
     }
 
     std::vector<Rule> rules;
-    size_t r_pos = json.find("\"routing\"");
-    if (r_pos == std::string_view::npos) r_pos = json.find("\"rules\"");
+    // routing.balancers may precede routing.rules; locate the rules key before
+    // looking for its array rather than taking the first array in routing.
+    const size_t routing_pos = json.find("\"routing\"");
+    size_t r_pos = json.find("\"rules\"", routing_pos == std::string_view::npos ? 0 : routing_pos);
     if (r_pos == std::string_view::npos) return rules;
 
     size_t array_start = json.find('[', r_pos);

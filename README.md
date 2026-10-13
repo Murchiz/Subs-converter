@@ -21,7 +21,6 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
     - `xray`: Base64-encoded V2Ray / Xray link list
     - `xray-one`: Single consolidated Xray JSON configuration
     - `xray-jsons`: Array of standalone Xray JSON configurations (`[...]`) containing balancers with `burstObservatory` and individual node configs
-    - `xray-mixed` (**experimental; not a verified client import format**): Raw balancer JSON objects followed by server share links. Reported to omit balancers on import in Happ and v2rayNG. Use `xray-jsons` for JSON subscriptions.
     - `v2ray`: Base64-encoded V2Ray link list
   - Full routing rule extraction and conversion between Xray/Sing-box rules and Clash rule sets.
 - **Smart Balancer Handling & Deduplication**:
@@ -49,10 +48,12 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
 - **Ninja** (recommended)
 - **C++23 Compiler**:
   - **Windows**: Visual Studio 2022 / MSVC
-  - **Linux**: GCC 14+ or Clang 18+
+  - **Linux**: GCC 14+ or Clang with a C++23-capable standard library (including `<format>` and `<print>`)
 - **Linux Build Dependencies**:
   - `libcurl` development package (e.g. `sudo apt install -y libcurl4-openssl-dev ninja-build`)
 - **Python 3** (optional, for YAML tests)
+
+CMake requires C++23 with compiler extensions disabled and checks the required standard-library features at configure time. Builds use strict conformance diagnostics (`-pedantic-errors` on GCC/Clang, `/permissive-` on MSVC). Native tests keep assertions enabled in all build configurations, including Release/CI.
 
 ### Build with CMake Presets (Recommended)
 
@@ -116,7 +117,6 @@ force_balancer = false
 # Port 25505 -> Xray / V2Ray Share Links (Base64)
 # Port 25506 -> Xray Standalone Config JSON
 # Port 25507 -> Xray Configs Array JSON ([...])
-# Experimental xray-mixed is opt-in and is not a verified client import format.
 converts = clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons
 ```
 
@@ -149,7 +149,7 @@ sudo ./sub_bridge --uninstall
 Convert any subscription URL or local file directly into a target configuration:
 ```bash
 # Syntax: ./sub_bridge --convert <target> <url_or_file> [output_file] [--force-balancer]
-# Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed, v2ray
+# Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, v2ray
 
 # Convert to Clash YAML
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml
@@ -163,20 +163,9 @@ Convert any subscription URL or local file directly into a target configuration:
 # Convert to native Xray JSONs Array ([...])
 ./sub_bridge --convert xray-jsons "https://example.com/sub" xray_configs.json
 
-# Experimental raw JSON/link concatenation (not a verified client import format)
-./sub_bridge --convert xray-mixed "https://example.com/sub" xray_mixed.txt
-
 # Force generation of SubBridge Auto balancer group
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml --force-balancer
 ```
-
-#### Mixed-format status
-
-**The current `xray-mixed` payload is experimental, not a verified client import format.** It concatenates standalone JSON objects and URI lines. Each component can be valid on its own while the complete response is neither a valid JSON document nor a URI-only subscription. Reports of missing balancers include both Happ and v2rayNG; this is an unresolved output-format problem in the converter, not a client-specific defect.
-
-The automated tests validate generated components and preservation of upstream settings, **not successful client imports**. No alternative mixed framing or Base64 wrapper has been validated. `xray-mixed` is therefore not included in the recommended `converts` list.
-
-For one JSON subscription containing balancers and individual server configs, use `/sub?target=xray-jsons&url=...` or `converts = xray-jsons`. Individual servers are JSON profiles in that format, not URI entries. Use `xray` for a Base64-encoded link-only subscription. Neither is advertised as implementing the originally requested mixed JSON/link import behavior.
 
 XHTTP VLESS/Trojan links preserve both `mode` and URL-encoded `extra`. In particular, `uplinkDataPlacement=header` requires `mode=packet-up`; dropping the mode can cause Xray to reject the resulting configuration.
 
@@ -187,6 +176,8 @@ Hysteria 2 nodes use Xray's native `"protocol": "hysteria"` and `"network": "hys
 This preserves the outbound, not the entire source profile: DNS, inbounds, and routing still follow the selected target's existing generation behavior. Xray-specific settings without share-link equivalents are preserved by JSON output, not guaranteed by link-only output.
 
 Xray's native Hysteria implementation requires version 2. Attempting to synthesize a Hysteria 1 node in an Xray JSON target now fails explicitly (nonzero CLI exit or HTTP 422), rather than silently generating VLESS. Hysteria 1 link output remains available through `xray`/`v2ray`.
+
+Unknown conversion targets are rejected: CLI conversion exits nonzero, HTTP conversion returns 400, and unsupported entries in `converts` are skipped with a warning. Skipped entries retain their port slot so later configured endpoints do not move.
 
 ### 4. Help & Version
 ```bash
@@ -199,7 +190,6 @@ When SubBridge is running, connect your proxy client directly to the built-in su
 ```text
 http://127.0.0.1:25500/sub?target=clash&url=http://127.0.0.1:25501
 http://127.0.0.1:25500/sub?target=xray-jsons&url=https://example.com/sub
-http://127.0.0.1:25500/sub?target=xray-mixed&url=https://example.com/sub
 http://127.0.0.1:25500/sub?target=clash&force_balancer=true&url=https://example.com/sub
 ```
 
@@ -215,8 +205,9 @@ ctest --preset release --output-on-failure
 
 Tests include:
 - `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
-- `XrayMixedTest`: Component generation, empty-input handling, XHTTP mode/extra round trips, and upstream balancer preservation when aggregating with unrelated gRPC nodes
+- `XrayTest`: Component generation, empty-input handling, XHTTP mode/extra round trips, and upstream balancer preservation when aggregating with unrelated gRPC nodes
 - `XrayFidelityTest`: Offline CLI validation using an independent JSON parser and sanitized `leastLoad`, Hysteria 2, and gRPC Reality fixtures; not a client import test
+- `HttpTargetTest` (POSIX): HTTP rejection of unsupported targets and success checks for supported targets using local fixtures, without a listening server
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
 

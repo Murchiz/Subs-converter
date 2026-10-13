@@ -8,9 +8,15 @@
 #include <cstring>
 #include <string_view>
 
-void test_xray_mixed_links() {
-    assert(gen_xray_mixed({}).empty());
-    assert(gen_xray_mixed({Proxy{}}).empty());
+static_assert(is_supported_target("xray"));
+static_assert(is_supported_target("xray-jsons"));
+static_assert(is_supported_target("v2ray-json"));
+static_assert(!is_supported_target(""));
+static_assert(!is_supported_target("unsupported-target"));
+
+void test_share_links() {
+    assert(gen_v2ray({}).empty());
+    assert(gen_v2ray({Proxy{}}).empty());
 
     const std::vector<std::string> protocols = {
         "vless", "trojan", "vmess", "ss", "shadowsocks", "hysteria", "hysteria2", "hy2"
@@ -27,84 +33,16 @@ void test_xray_mixed_links() {
         std::string scheme = protocol;
         if (scheme == "shadowsocks") scheme = "ss";
         if (scheme == "hy2") scheme = "hysteria2";
-        std::string mixed = gen_xray_mixed({p});
-        assert(mixed.starts_with(scheme + "://"));
-        assert(mixed.ends_with("\n"));
-        assert(mixed == base64_decode(gen_v2ray({p})));
+        std::string links = base64_decode(gen_v2ray({p}));
+        assert(links.starts_with(scheme + "://"));
+        assert(links.ends_with("\n"));
+        assert(links.find('\0') == std::string::npos);
     }
-    // No balancers means a plain link list, not an empty JSON array or Base64.
-    std::string mixed = gen_xray_mixed(proxies);
-    assert(mixed == base64_decode(gen_v2ray(proxies)));
-    assert(mixed.find('{') == std::string::npos);
-    std::println("test_xray_mixed_links passed.");
-}
-
-void test_xray_mixed_balancers() {
-    Proxy p{};
-    strcpy(p.protocol, "vless");
-    strcpy(p.name, "Server Germany");
-    strcpy(p.server, "192.0.2.1");
-    strcpy(p.uuid, "00000000-0000-0000-0000-000000000001");
-    strcpy(p.security, "reality");
-    strcpy(p.sni, "example.com");
-    strcpy(p.pbk, "example-key-1");
-    p.port = 443;
-    std::vector<Proxy> proxies{p};
-    strcpy(p.name, "Server Netherlands");
-    strcpy(p.server, "192.0.2.2");
-    proxies.push_back(p);
-
-    Balancer b{};
-    strcpy(b.name, "Auto Europe");
-    b.proxies = {"Server Germany", "Server Netherlands"};
-    std::vector<Balancer> balancers{b};
-    Rule r{};
-    strcpy(r.outbound, "block");
-    r.protocols = {"bittorrent"};
-    std::vector<Rule> rules{r};
-
-    // Mixed output keeps only balancers as JSON; member nodes still get links.
-    std::string xray_jsons = gen_xray_jsons(proxies, balancers, rules);
-    std::string mixed = gen_xray_mixed(proxies, balancers, rules);
+    // Decoding the subscription yields a link list without embedded JSON or NULs.
     std::string links = base64_decode(gen_v2ray(proxies));
-    assert(!links.empty());
-    assert(mixed.ends_with(links));
-    assert(!mixed.starts_with("["));
-    std::string balancer_json = mixed.substr(0, mixed.size() - links.size() - 1);
-    assert(xray_jsons.starts_with("[\n" + balancer_json + ",\n"));
-    assert(balancer_json.contains("\"balancers\":"));
-    assert(balancer_json.contains("\"burstObservatory\":"));
-    assert(balancer_json.contains("bittorrent"));
-    assert(balancer_json.contains("192.0.2.1"));
-    assert(balancer_json.contains("192.0.2.2"));
-    assert(!balancer_json.contains("\"remarks\": \"Server Germany\""));
-    assert(links.contains("#Server%20Germany\n"));
-    assert(links.contains("#Server%20Netherlands\n"));
-
-    // Multiple balancers are separate objects, without array commas.
-    balancers.push_back(b);
-    assert(gen_xray_mixed(proxies, balancers, rules) ==
-           balancer_json + "\n" + balancer_json + "\n" + links);
-
-    // A standalone node is linked but is not added to an explicit balancer.
-    strcpy(p.name, "Standalone");
-    strcpy(p.server, "192.0.2.3");
-    proxies.push_back(p);
-    mixed = gen_xray_mixed(proxies, {b}, rules);
-    assert(mixed.starts_with(balancer_json + "\n"));
-    assert(mixed.ends_with(base64_decode(gen_v2ray(proxies))));
-    assert(mixed.contains("#Standalone\n"));
-
-    // Preserve xray-jsons' fallback to all nodes for an empty member list.
-    b.proxies.clear();
-    mixed = gen_xray_mixed(proxies, {b});
-    assert(mixed.contains("\"address\": \"192.0.2.3\""));
-    // No standalone proxies: still emit a complete JSON object, not an array.
-    mixed = gen_xray_mixed({}, {b});
-    assert(mixed.starts_with("  {\n"));
-    assert(mixed.ends_with("  }\n"));
-    assert(mixed.contains("\"remarks\": \"Auto Europe\""));
-    std::println("test_xray_mixed_balancers passed.");
+    assert(links.find('\0') == std::string::npos);
+    assert(links.find('{') == std::string::npos);
+    std::println("test_share_links passed.");
 }
 
 void test_xhttp_share_links() {
@@ -137,13 +75,11 @@ void test_xhttp_share_links() {
         strcpy(p.protocol, protocol);
         for (const char* mode : {"packet-up", "stream-up", "stream-one", "auto"}) {
             strcpy(p.mode, mode);
-            std::string link = gen_xray_mixed({p});
+            std::string link = base64_decode(gen_v2ray({p}));
             assert(link.contains("type=xhttp&"));
             assert(link.contains(std::string("mode=") + mode + "&"));
             assert(link.contains("path=%2Fupload%3Fa%3D1%26b%3D2&"));
             assert(link.contains("extra=" + url_encode(p.extra)));
-            // The same fix must reach the Base64 xray/v2ray targets.
-            assert(link == base64_decode(gen_v2ray({p})));
             link.pop_back(); // Strip the subscription line separator.
             Proxy roundtrip = parse_uri(link);
             assert(std::string_view(roundtrip.mode) == mode);
@@ -162,18 +98,18 @@ void test_xhttp_share_links() {
     // Mode must not depend on whether the optional path was supplied.
     p.path[0] = '\0';
     strcpy(p.mode, "packet-up");
-    assert(gen_xray_mixed({p}).contains("mode=packet-up&"));
+    assert(base64_decode(gen_v2ray({p})).contains("mode=packet-up&"));
     // Do not invent a mode for nodes that leave it unspecified.
     p.mode[0] = '\0';
-    assert(!gen_xray_mixed({p}).contains("mode="));
+    assert(!base64_decode(gen_v2ray({p})).contains("mode="));
 
     // Leave the existing gRPC mode/serviceName handling intact.
     strcpy(p.type, "grpc");
     strcpy(p.path, "grpc-service");
     p.extra[0] = '\0';
-    assert(gen_xray_mixed({p}).contains("serviceName=grpc-service&mode=gun"));
+    assert(base64_decode(gen_v2ray({p})).contains("serviceName=grpc-service&mode=gun"));
     strcpy(p.mode, "multi");
-    assert(gen_xray_mixed({p}).contains("serviceName=grpc-service&mode=multi"));
+    assert(base64_decode(gen_v2ray({p})).contains("serviceName=grpc-service&mode=multi"));
     std::println("test_xhttp_share_links passed.");
 }
 
@@ -208,8 +144,6 @@ void test_upstream_balancer_fidelity() {
     const std::string links = base64_decode(gen_v2ray({standalone}));
     assert(links.starts_with("vless://"));
     assert(links.contains("serviceName=synthetic-grpc&mode=gun"));
-    // This checks component fidelity only, not client import compatibility.
-    assert(gen_xray_mixed({standalone}, balancers, rules) == source + "\n" + links);
 
     // Neither aggregation with other nodes nor unrelated rules may overwrite
     // an upstream balancer's routing, selectors, strategy or observatory.
@@ -240,7 +174,6 @@ void test_hysteria2_xray_output() {
     strcpy(group.name, "Synthetic group");
     group.proxies = {p.name};
     assert(gen_xray_jsons({p}, {group}).contains(p.xray_stream_settings));
-    assert(gen_xray_mixed({p}, {group}).contains(p.xray_stream_settings));
 
     // URI and non-Xray inputs do not have a preserved stream. Synthesize the
     // native Xray schema rather than writing a VLESS outbound or TCP transport.
@@ -279,8 +212,7 @@ void test_json_object_extraction() {
 }
 
 int main() {
-    test_xray_mixed_links();
-    test_xray_mixed_balancers();
+    test_share_links();
     test_xhttp_share_links();
     test_upstream_balancer_fidelity();
     test_hysteria2_xray_output();

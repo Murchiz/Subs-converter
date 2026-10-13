@@ -51,7 +51,7 @@ std::string utf16_to_utf8(uint32_t cp) {
 std::string base64_decode(std::string_view in) {
     std::string out;
     out.reserve(in.size() * 3 / 4);
-    int val = 0;
+    std::uint32_t val = 0;
     int valb = -8;
     for (char c : in) {
         int8_t d = B64_DECODE_TABLE[static_cast<unsigned char>(c)];
@@ -95,7 +95,7 @@ std::string url_decode(std::string_view str) {
 std::string base64_encode(std::string_view in) {
     std::string out;
     out.reserve((in.size() + 2) / 3 * 4);
-    int val = 0;
+    std::uint32_t val = 0;
     int valb = -6;
     for (unsigned char c : in) {
         val = (val << 8) + c;

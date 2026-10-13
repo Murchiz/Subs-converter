@@ -1,6 +1,7 @@
 #include "generator.h"
 #include "utils.h"
 #include <cstring>
+#include <cstdlib>
 #include <format>
 #include <string_view>
 #include <stdexcept>
@@ -23,11 +24,11 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
                            "    type: {}\n"
                            "    server: {}\n"
                            "    port: {}\n",
-                           s_name, p.protocol, p.server, p.port);
+                           s_name, std::string_view(p.protocol), std::string_view(p.server), p.port);
 
         std::string_view proto = p.protocol;
         if (proto == "vless" || proto == "vmess") {
-            out += std::format("    uuid: {}\n", p.uuid);
+            out += std::format("    uuid: {}\n", std::string_view(p.uuid));
             if (proto == "vmess") {
                 out += "    alterId: 0\n"
                        "    cipher: auto\n";
@@ -36,32 +37,32 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
                 out += "    udp: true\n"
                        "    packet-encoding: xudp\n";
                 if (p.flow[0]) {
-                    out += std::format("    flow: {}\n", p.flow);
+                    out += std::format("    flow: {}\n", std::string_view(p.flow));
                 }
             }
         } else if (proto == "trojan") {
             out += std::format("    password: {}\n"
-                               "    udp: true\n", p.uuid);
+                               "    udp: true\n", std::string_view(p.uuid));
         } else if (proto == "hysteria2") {
-            out += std::format("    password: {}\n", p.uuid);
-            if (p.sni[0]) out += std::format("    sni: {}\n", p.sni);
-            if (p.obfs[0]) out += std::format("    obfs: {}\n", p.obfs);
-            if (p.obfs_pass[0]) out += std::format("    obfs-password: {}\n", p.obfs_pass);
+            out += std::format("    password: {}\n", std::string_view(p.uuid));
+            if (p.sni[0]) out += std::format("    sni: {}\n", std::string_view(p.sni));
+            if (p.obfs[0]) out += std::format("    obfs: {}\n", std::string_view(p.obfs));
+            if (p.obfs_pass[0]) out += std::format("    obfs-password: {}\n", std::string_view(p.obfs_pass));
             out += std::format("    up: {}\n"
                                "    down: {}\n"
                                "    skip-cert-verify: false\n",
-                               p.up[0] ? p.up : "100 Mbps",
-                               p.down[0] ? p.down : "100 Mbps");
+                               std::string_view(p.up[0] ? p.up : "100 Mbps"),
+                               std::string_view(p.down[0] ? p.down : "100 Mbps"));
         } else if (proto == "hysteria") {
-            out += std::format("    auth_str: {}\n", p.uuid);
-            if (p.sni[0]) out += std::format("    sni: {}\n", p.sni);
-            if (p.obfs[0]) out += std::format("    obfs: {}\n", p.obfs);
-            if (p.obfs_pass[0]) out += std::format("    obfs-parameter: {}\n", p.obfs_pass);
+            out += std::format("    auth_str: {}\n", std::string_view(p.uuid));
+            if (p.sni[0]) out += std::format("    sni: {}\n", std::string_view(p.sni));
+            if (p.obfs[0]) out += std::format("    obfs: {}\n", std::string_view(p.obfs));
+            if (p.obfs_pass[0]) out += std::format("    obfs-parameter: {}\n", std::string_view(p.obfs_pass));
             out += std::format("    up: {}\n"
                                "    down: {}\n"
                                "    skip-cert-verify: false\n",
-                               p.up[0] ? p.up : "100 Mbps",
-                               p.down[0] ? p.down : "100 Mbps");
+                               std::string_view(p.up[0] ? p.up : "100 Mbps"),
+                               std::string_view(p.down[0] ? p.down : "100 Mbps"));
         }
 
         std::string net = p.type;
@@ -73,8 +74,8 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
         std::string_view sec = p.security;
         if (sec == "tls" || sec == "reality") {
             out += "    tls: true\n";
-            if (p.sni[0]) out += std::format("    servername: {}\n", p.sni);
-            if (p.fp[0]) out += std::format("    client-fingerprint: {}\n", p.fp);
+            if (p.sni[0]) out += std::format("    servername: {}\n", std::string_view(p.sni));
+            if (p.fp[0]) out += std::format("    client-fingerprint: {}\n", std::string_view(p.fp));
             if (p.alpn[0]) {
                 out += "    alpn:\n";
                 std::string_view alpn_str = p.alpn;
@@ -90,8 +91,8 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
 
         if (sec == "reality") {
             out += std::format("    reality-opts:\n"
-                               "      public-key: {}\n", p.pbk);
-            if (p.sid[0]) out += std::format("      short-id: {}\n", p.sid);
+                               "      public-key: {}\n", std::string_view(p.pbk));
+            if (p.sid[0]) out += std::format("      short-id: {}\n", std::string_view(p.sid));
         }
 
         std::string_view ptype = p.type;
@@ -101,18 +102,18 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
                                "      path: \"{}\"\n"
                                "      headers:\n"
                                "        Host: {}\n",
-                               p.path[0] ? p.path : "/", host_val);
+                               std::string_view(p.path[0] ? p.path : "/"), host_val);
         } else if (ptype == "grpc") {
             out += std::format("    grpc-opts:\n"
-                               "      grpc-service-name: {}\n", p.path);
+                               "      grpc-service-name: {}\n", std::string_view(p.path));
         } else if (ptype == "xhttp") {
             const char* host_val = p.host[0] ? p.host : (p.sni[0] ? p.sni : p.server);
             out += std::format("    xhttp-opts:\n"
                                "      path: {}\n"
                                "      host: {}\n",
-                               p.path[0] ? p.path : "/", host_val);
-            if (p.mode[0]) out += std::format("      mode: {}\n", p.mode);
-            if (p.extra[0]) out += std::format("      extra: {}\n", p.extra);
+                               std::string_view(p.path[0] ? p.path : "/"), host_val);
+            if (p.mode[0]) out += std::format("      mode: {}\n", std::string_view(p.mode));
+            if (p.extra[0]) out += std::format("      extra: {}\n", std::string_view(p.extra));
         } else if (ptype == "httpupgrade") {
             const char* host_val = p.host[0] ? p.host : (p.sni[0] ? p.sni : p.server);
             out += std::format("    ws-opts:\n"
@@ -121,7 +122,7 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
                                "        Host: {}\n"
                                "      v2ray-http-upgrade: true\n"
                                "      v2ray-http-upgrade-fast-open: true\n",
-                               p.path[0] ? p.path : "/", host_val);
+                               std::string_view(p.path[0] ? p.path : "/"), host_val);
         }
     }
     
@@ -419,52 +420,52 @@ std::string gen_singbox(const std::vector<Proxy>& proxies, std::string_view plat
                                      "      \"tag\": \"{}\",\n"
                                      "      \"server\": \"{}\",\n"
                                      "      \"server_port\": {}",
-                                     sb_type, s_name, p.server, p.port);
+                                     sb_type, s_name, std::string_view(p.server), p.port);
 
         std::string_view proto = p.protocol;
         if (proto == "vless" || proto == "vmess") {
-            outbounds_arr += std::format(",\n      \"uuid\": \"{}\"", p.uuid);
+            outbounds_arr += std::format(",\n      \"uuid\": \"{}\"", std::string_view(p.uuid));
             if (proto == "vmess") {
                 outbounds_arr += ",\n      \"security\": \"auto\"";
             }
             if (proto == "vless" && p.flow[0]) {
-                outbounds_arr += std::format(",\n      \"flow\": \"{}\"", p.flow);
+                outbounds_arr += std::format(",\n      \"flow\": \"{}\"", std::string_view(p.flow));
             }
         } else if (proto == "trojan") {
-            outbounds_arr += std::format(",\n      \"password\": \"{}\"", p.uuid);
+            outbounds_arr += std::format(",\n      \"password\": \"{}\"", std::string_view(p.uuid));
         } else if (proto == "shadowsocks" || proto == "ss") {
             outbounds_arr += std::format(",\n      \"method\": \"{}\",\n      \"password\": \"{}\"",
-                                         p.cipher[0] ? p.cipher : "aes-128-gcm", p.uuid);
+                                         std::string_view(p.cipher[0] ? p.cipher : "aes-128-gcm"), std::string_view(p.uuid));
         } else if (proto == "http" || proto == "https") {
             if (p.uuid[0]) {
-                outbounds_arr += std::format(",\n      \"password\": \"{}\"", p.uuid);
+                outbounds_arr += std::format(",\n      \"password\": \"{}\"", std::string_view(p.uuid));
             }
             if (proto == "https" || std::string_view(p.security) == "tls") {
                 outbounds_arr += ",\n      \"tls\": {\n        \"enabled\": true";
-                if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", p.sni);
+                if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", std::string_view(p.sni));
                 outbounds_arr += "\n      }";
             }
         } else if (proto == "socks" || proto == "socks5") {
             outbounds_arr += ",\n      \"version\": \"5\"";
             if (p.uuid[0]) {
-                outbounds_arr += std::format(",\n      \"password\": \"{}\"", p.uuid);
+                outbounds_arr += std::format(",\n      \"password\": \"{}\"", std::string_view(p.uuid));
             }
         } else if (proto == "hysteria2" || proto == "hy2") {
-            outbounds_arr += std::format(",\n      \"password\": \"{}\",\n      \"tls\": {{\n        \"enabled\": true", p.uuid);
-            if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", p.sni);
+            outbounds_arr += std::format(",\n      \"password\": \"{}\",\n      \"tls\": {{\n        \"enabled\": true", std::string_view(p.uuid));
+            if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", std::string_view(p.sni));
             outbounds_arr += "\n      }";
             if (p.obfs[0]) {
-                outbounds_arr += std::format(",\n      \"obfs\": {{\n        \"type\": \"{}\"", p.obfs);
-                if (p.obfs_pass[0]) outbounds_arr += std::format(",\n        \"password\": \"{}\"", p.obfs_pass);
+                outbounds_arr += std::format(",\n      \"obfs\": {{\n        \"type\": \"{}\"", std::string_view(p.obfs));
+                if (p.obfs_pass[0]) outbounds_arr += std::format(",\n        \"password\": \"{}\"", std::string_view(p.obfs_pass));
                 outbounds_arr += "\n      }";
             }
         } else if (proto == "hysteria") {
-            outbounds_arr += std::format(",\n      \"auth_str\": \"{}\",\n      \"tls\": {{\n        \"enabled\": true", p.uuid);
-            if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", p.sni);
+            outbounds_arr += std::format(",\n      \"auth_str\": \"{}\",\n      \"tls\": {{\n        \"enabled\": true", std::string_view(p.uuid));
+            if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", std::string_view(p.sni));
             outbounds_arr += "\n      }";
             if (p.obfs[0]) {
-                outbounds_arr += std::format(",\n      \"obfs\": {{\n        \"type\": \"{}\"", p.obfs);
-                if (p.obfs_pass[0]) outbounds_arr += std::format(",\n        \"password\": \"{}\"", p.obfs_pass);
+                outbounds_arr += std::format(",\n      \"obfs\": {{\n        \"type\": \"{}\"", std::string_view(p.obfs));
+                if (p.obfs_pass[0]) outbounds_arr += std::format(",\n        \"password\": \"{}\"", std::string_view(p.obfs_pass));
                 outbounds_arr += "\n      }";
             }
             if (p.up[0]) {
@@ -480,8 +481,8 @@ std::string gen_singbox(const std::vector<Proxy>& proxies, std::string_view plat
         std::string_view sec = p.security;
         if (proto != "hysteria2" && proto != "hy2" && proto != "hysteria" && proto != "http" && proto != "https" && (sec == "tls" || sec == "reality")) {
             outbounds_arr += ",\n      \"tls\": {\n        \"enabled\": true";
-            if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", p.sni);
-            if (p.fp[0]) outbounds_arr += std::format(",\n        \"utls\": {{ \"enabled\": true, \"fingerprint\": \"{}\" }}", p.fp);
+            if (p.sni[0]) outbounds_arr += std::format(",\n        \"server_name\": \"{}\"", std::string_view(p.sni));
+            if (p.fp[0]) outbounds_arr += std::format(",\n        \"utls\": {{ \"enabled\": true, \"fingerprint\": \"{}\" }}", std::string_view(p.fp));
             if (p.alpn[0]) {
                 outbounds_arr += ",\n        \"alpn\": [";
                 std::string_view alpn_str = p.alpn;
@@ -498,8 +499,8 @@ std::string gen_singbox(const std::vector<Proxy>& proxies, std::string_view plat
                 outbounds_arr += "]";
             }
             if (sec == "reality") {
-                outbounds_arr += std::format(",\n        \"reality\": {{\n          \"enabled\": true,\n          \"public_key\": \"{}\"", p.pbk);
-                if (p.sid[0]) outbounds_arr += std::format(",\n          \"short_id\": \"{}\"", p.sid);
+                outbounds_arr += std::format(",\n        \"reality\": {{\n          \"enabled\": true,\n          \"public_key\": \"{}\"", std::string_view(p.pbk));
+                if (p.sid[0]) outbounds_arr += std::format(",\n          \"short_id\": \"{}\"", std::string_view(p.sid));
                 outbounds_arr += "\n        }";
             }
             outbounds_arr += "\n      }";
@@ -507,16 +508,16 @@ std::string gen_singbox(const std::vector<Proxy>& proxies, std::string_view plat
 
         std::string_view ptype = p.type;
         if (proto != "hysteria2" && proto != "hy2" && proto != "hysteria" && p.type[0] && ptype != "tcp") {
-            outbounds_arr += std::format(",\n      \"transport\": {{\n        \"type\": \"{}\"", p.type);
+            outbounds_arr += std::format(",\n      \"transport\": {{\n        \"type\": \"{}\"", std::string_view(p.type));
             if (ptype == "ws" || ptype == "httpupgrade" || ptype == "xhttp") {
                 const char* host_val = p.host[0] ? p.host : (p.sni[0] ? p.sni : p.server);
                 outbounds_arr += std::format(",\n        \"path\": \"{}\",\n        \"headers\": {{ \"Host\": \"{}\" }}",
-                                             p.path[0] ? p.path : "/", host_val);
+                                             std::string_view(p.path[0] ? p.path : "/"), host_val);
                 if (ptype == "xhttp" && p.extra[0]) {
-                    outbounds_arr += std::format(",\n        \"extra\": {}", p.extra);
+                    outbounds_arr += std::format(",\n        \"extra\": {}", std::string_view(p.extra));
                 }
             } else if (ptype == "grpc") {
-                outbounds_arr += std::format(",\n        \"service_name\": \"{}\"", p.path);
+                outbounds_arr += std::format(",\n        \"service_name\": \"{}\"", std::string_view(p.path));
             }
             outbounds_arr += "\n      }";
         }
@@ -615,14 +616,14 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
                            "{}        \"users\": [\n"
                            "{}          {{\n"
                            "{}            \"id\": \"{}\"",
-                           indent, indent, indent, indent, p.server, indent, p.port, indent, indent, indent, p.uuid);
+                           indent, indent, indent, indent, std::string_view(p.server), indent, p.port, indent, indent, indent, std::string_view(p.uuid));
         if (proto == "vless") {
             out += std::format(",\n{}            \"encryption\": \"none\"", indent);
-            if (p.flow[0]) out += std::format(",\n{}            \"flow\": \"{}\"", indent, p.flow);
+            if (p.flow[0]) out += std::format(",\n{}            \"flow\": \"{}\"", indent, std::string_view(p.flow));
         } else if (proto == "vmess") {
             int alt = (p.alterId[0]) ? atoi(p.alterId) : 0;
             out += std::format(",\n{}            \"alterId\": {},\n{}            \"security\": \"{}\"",
-                               indent, alt, indent, p.cipher[0] ? p.cipher : "auto");
+                               indent, alt, indent, std::string_view(p.cipher[0] ? p.cipher : "auto"));
         }
         out += std::format("\n{}          }}\n"
                            "{}        ]\n"
@@ -638,7 +639,7 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
                            "{}        \"password\": \"{}\"\n"
                            "{}      }}\n"
                            "{}    ]\n"
-                           "{}  }}", indent, indent, indent, indent, p.server, indent, p.port, indent, p.uuid, indent, indent, indent);
+                           "{}  }}", indent, indent, indent, indent, std::string_view(p.server), indent, p.port, indent, std::string_view(p.uuid), indent, indent, indent);
     } else if (proto == "shadowsocks" || proto == "ss") {
         out += std::format("{}  \"settings\": {{\n"
                            "{}    \"servers\": [\n"
@@ -649,7 +650,7 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
                            "{}        \"password\": \"{}\"\n"
                            "{}      }}\n"
                            "{}    ]\n"
-                           "{}  }}", indent, indent, indent, indent, p.server, indent, p.port, indent, p.cipher[0] ? p.cipher : "aes-128-gcm", indent, p.uuid, indent, indent, indent);
+                           "{}  }}", indent, indent, indent, indent, std::string_view(p.server), indent, p.port, indent, std::string_view(p.cipher[0] ? p.cipher : "aes-128-gcm"), indent, std::string_view(p.uuid), indent, indent, indent);
     } else if (proto == "socks" || proto == "http" || proto == "https") {
         out += std::format("{0}  \"settings\": {{\n"
                            "{0}    \"servers\": [\n"
@@ -659,7 +660,7 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
                            "{0}        \"users\": []\n"
                            "{0}      }}\n"
                            "{0}    ]\n"
-                           "{0}  }}", indent, p.server, p.port);
+                           "{0}  }}", indent, std::string_view(p.server), p.port);
     }
 
     if (is_hysteria2 && !p.xray_stream_settings.empty()) {
@@ -690,27 +691,27 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
         out += std::format(",\n{}    \"tcpSettings\": {{}}", indent);
     } else if (net == "ws") {
         out += std::format(",\n{}    \"wsSettings\": {{\n"
-                           "{}      \"path\": \"{}\"", indent, indent, p.path[0] ? p.path : "/");
+                           "{}      \"path\": \"{}\"", indent, indent, std::string_view(p.path[0] ? p.path : "/"));
         if (p.host[0] || p.sni[0]) {
-            out += std::format(",\n{}      \"headers\": {{ \"Host\": \"{}\" }}", indent, p.host[0] ? p.host : p.sni);
+            out += std::format(",\n{}      \"headers\": {{ \"Host\": \"{}\" }}", indent, std::string_view(p.host[0] ? p.host : p.sni));
         }
         out += std::format("\n{}    }}", indent);
     } else if (net == "grpc") {
         out += std::format(",\n{}    \"grpcSettings\": {{\n"
                            "{}      \"serviceName\": \"{}\",\n"
                            "{}      \"multiMode\": false\n"
-                           "{}    }}", indent, indent, p.path, indent, indent);
+                           "{}    }}", indent, indent, std::string_view(p.path), indent, indent);
     } else if (net == "xhttp") {
         out += std::format(",\n{}    \"xhttpSettings\": {{\n"
-                           "{}      \"path\": \"{}\"", indent, indent, p.path[0] ? p.path : "/");
+                           "{}      \"path\": \"{}\"", indent, indent, std::string_view(p.path[0] ? p.path : "/"));
         if (p.host[0] || p.sni[0]) {
-            out += std::format(",\n{}      \"host\": \"{}\"", indent, p.host[0] ? p.host : p.sni);
+            out += std::format(",\n{}      \"host\": \"{}\"", indent, std::string_view(p.host[0] ? p.host : p.sni));
         }
         if (p.mode[0]) {
-            out += std::format(",\n{}      \"mode\": \"{}\"", indent, p.mode);
+            out += std::format(",\n{}      \"mode\": \"{}\"", indent, std::string_view(p.mode));
         }
         if (p.extra[0]) {
-            out += std::format(",\n{}      \"extra\": {}", indent, p.extra);
+            out += std::format(",\n{}      \"extra\": {}", indent, std::string_view(p.extra));
         }
         out += std::format("\n{}    }}", indent);
     }
@@ -723,14 +724,14 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
         out += std::format(",\n{}    \"realitySettings\": {{\n"
                            "{}      \"serverName\": \"{}\",\n"
                            "{}      \"publicKey\": \"{}\"",
-                           indent, indent, p.sni[0] ? p.sni : p.server, indent, p.pbk);
-        if (p.sid[0]) out += std::format(",\n{}      \"shortId\": \"{}\"", indent, p.sid);
-        if (p.fp[0]) out += std::format(",\n{}      \"fingerprint\": \"{}\"", indent, p.fp);
+                           indent, indent, std::string_view(p.sni[0] ? p.sni : p.server), indent, std::string_view(p.pbk));
+        if (p.sid[0]) out += std::format(",\n{}      \"shortId\": \"{}\"", indent, std::string_view(p.sid));
+        if (p.fp[0]) out += std::format(",\n{}      \"fingerprint\": \"{}\"", indent, std::string_view(p.fp));
         out += std::format("\n{}    }}", indent);
     } else if (sec == "tls") {
         out += std::format(",\n{}    \"tlsSettings\": {{\n"
-                           "{}      \"serverName\": \"{}\"", indent, indent, p.sni[0] ? p.sni : p.server);
-        if (p.fp[0]) out += std::format(",\n{}      \"fingerprint\": \"{}\"", indent, p.fp);
+                           "{}      \"serverName\": \"{}\"", indent, indent, std::string_view(p.sni[0] ? p.sni : p.server));
+        if (p.fp[0]) out += std::format(",\n{}      \"fingerprint\": \"{}\"", indent, std::string_view(p.fp));
         if (p.alpn[0] || is_hysteria2) {
             out += std::format(",\n{}      \"alpn\": [", indent);
             std::string_view alpn_str = p.alpn[0] ? p.alpn : "h3";
@@ -880,24 +881,24 @@ static std::string gen_share_links(const std::vector<Proxy>& proxies) {
         if (!p.protocol[0]) continue;
         std::string_view proto = p.protocol;
         if (proto == "vless" || proto == "trojan") {
-            std::string uri = std::format("{}://{}@{}:{}?", p.protocol, p.uuid, p.server, p.port);
+            std::string uri = std::format("{}://{}@{}:{}?", std::string_view(p.protocol), std::string_view(p.uuid), std::string_view(p.server), p.port);
             if (proto == "vless") uri += "encryption=none&";
             
             std::string net = p.type[0] ? p.type : "tcp";
             if (net == "httpupgrade") net = "ws";
             uri += std::format("type={}&", net);
 
-            if (p.security[0]) uri += std::format("security={}&", p.security);
-            if (p.flow[0]) uri += std::format("flow={}&", p.flow);
-            if (p.sni[0]) uri += std::format("sni={}&", p.sni);
-            if (p.fp[0]) uri += std::format("fp={}&", p.fp);
-            if (p.pbk[0]) uri += std::format("pbk={}&", p.pbk);
-            if (p.sid[0]) uri += std::format("sid={}&", p.sid);
+            if (p.security[0]) uri += std::format("security={}&", std::string_view(p.security));
+            if (p.flow[0]) uri += std::format("flow={}&", std::string_view(p.flow));
+            if (p.sni[0]) uri += std::format("sni={}&", std::string_view(p.sni));
+            if (p.fp[0]) uri += std::format("fp={}&", std::string_view(p.fp));
+            if (p.pbk[0]) uri += std::format("pbk={}&", std::string_view(p.pbk));
+            if (p.sid[0]) uri += std::format("sid={}&", std::string_view(p.sid));
             if (p.host[0]) uri += std::format("host={}&", url_encode(p.host));
 
             if (net == "grpc") {
                 uri += std::format("serviceName={}&", url_encode(p.path));
-                uri += std::format("mode={}&", p.mode[0] ? p.mode : "gun");
+                uri += std::format("mode={}&", std::string_view(p.mode[0] ? p.mode : "gun"));
             } else {
                 if (p.path[0]) uri += std::format("path={}&", url_encode(p.path));
                 // XHTTP extra settings depend on the selected mode (for example,
@@ -916,34 +917,34 @@ static std::string gen_share_links(const std::vector<Proxy>& proxies) {
             out += uri;
         }
         else if (proto == "shadowsocks" || proto == "ss") {
-            std::string userinfo = std::format("{}:{}", p.cipher[0] ? p.cipher : "aes-128-gcm", p.uuid);
+            std::string userinfo = std::format("{}:{}", std::string_view(p.cipher[0] ? p.cipher : "aes-128-gcm"), std::string_view(p.uuid));
             std::string uri = std::format("ss://{}@{}:{}#{}\n",
-                                          base64_encode(userinfo), p.server, p.port, url_encode(p.name));
+                                          base64_encode(userinfo), std::string_view(p.server), p.port, url_encode(p.name));
             out += uri;
         }
         else if (proto == "vmess") {
             std::string json = std::format("{{\"v\":\"2\",\"ps\":\"{}\",\"add\":\"{}\",\"port\":\"{}\",\"id\":\"{}\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"{}\",\"type\":\"none\",\"host\":\"{}\",\"path\":\"{}\",\"tls\":\"{}\",\"sni\":\"{}\",\"alpn\":\"{}\"}}",
-                                           p.name, p.server, p.port, p.uuid, p.type[0] ? p.type : "tcp",
-                                           p.host, p.path, p.security[0] ? p.security : "", p.sni, p.alpn);
+                                           std::string_view(p.name), std::string_view(p.server), p.port, std::string_view(p.uuid), std::string_view(p.type[0] ? p.type : "tcp"),
+                                           std::string_view(p.host), std::string_view(p.path), std::string_view(p.security[0] ? p.security : ""), std::string_view(p.sni), std::string_view(p.alpn));
             out += std::format("vmess://{}\n", base64_encode(json));
         }
         else if (proto == "hysteria2" || proto == "hy2") {
-            std::string uri = std::format("hysteria2://{}@{}:{}?", p.uuid, p.server, p.port);
-            if (p.sni[0]) uri += std::format("sni={}&", p.sni);
-            if (p.obfs[0]) uri += std::format("obfs={}&", p.obfs);
-            if (p.obfs_pass[0]) uri += std::format("obfs-password={}&", p.obfs_pass);
+            std::string uri = std::format("hysteria2://{}@{}:{}?", std::string_view(p.uuid), std::string_view(p.server), p.port);
+            if (p.sni[0]) uri += std::format("sni={}&", std::string_view(p.sni));
+            if (p.obfs[0]) uri += std::format("obfs={}&", std::string_view(p.obfs));
+            if (p.obfs_pass[0]) uri += std::format("obfs-password={}&", std::string_view(p.obfs_pass));
             if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
             uri += std::format("#{}\n", url_encode(p.name));
             out += uri;
         }
         else if (proto == "hysteria") {
-            std::string uri = std::format("hysteria://{}@{}:{}?", p.uuid, p.server, p.port);
-            if (p.sni[0]) uri += std::format("peer={}&", p.sni);
-            if (p.obfs[0]) uri += std::format("obfs={}&", p.obfs);
-            if (p.obfs_pass[0]) uri += std::format("obfsParam={}&", p.obfs_pass);
-            if (p.up[0]) uri += std::format("upmbps={}&", p.up);
-            if (p.down[0]) uri += std::format("downmbps={}&", p.down);
-            if (p.alpn[0]) uri += std::format("alpn={}&", p.alpn);
+            std::string uri = std::format("hysteria://{}@{}:{}?", std::string_view(p.uuid), std::string_view(p.server), p.port);
+            if (p.sni[0]) uri += std::format("peer={}&", std::string_view(p.sni));
+            if (p.obfs[0]) uri += std::format("obfs={}&", std::string_view(p.obfs));
+            if (p.obfs_pass[0]) uri += std::format("obfsParam={}&", std::string_view(p.obfs_pass));
+            if (p.up[0]) uri += std::format("upmbps={}&", std::string_view(p.up));
+            if (p.down[0]) uri += std::format("downmbps={}&", std::string_view(p.down));
+            if (p.alpn[0]) uri += std::format("alpn={}&", std::string_view(p.alpn));
             if (uri.back() == '&' || uri.back() == '?') uri.pop_back();
             uri += std::format("#{}\n", url_encode(p.name));
             out += uri;
@@ -1167,18 +1168,5 @@ std::string gen_xray_jsons(const std::vector<Proxy>& proxies,
     }
 
     out += "\n]\n";
-    return out;
-}
-
-std::string gen_xray_mixed(const std::vector<Proxy>& proxies,
-                           const std::vector<Balancer>& balancers,
-                           const std::vector<Rule>& rules) {
-    // Unlike xray-jsons, this is a text subscription, not a JSON array.
-    std::string out;
-    for (const auto& b : balancers) {
-        out += gen_xray_balancer(proxies, b, rules);
-        out += '\n';
-    }
-    out += gen_share_links(proxies);
     return out;
 }

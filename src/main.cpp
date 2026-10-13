@@ -5,6 +5,9 @@
 #include "utils.h"
 #include "safe_crt.h"
 #include <cstdio>
+#include <cstring>
+#include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -54,7 +57,9 @@ inline bool istarts_with(std::string_view str, std::string_view prefix) noexcept
 
 void print_version() {
     std::println("SubBridge Version: {}", SUB_BRIDGE_VERSION);
-    std::println("Build Time: {} {}", __DATE__, __TIME__);
+#ifdef SUB_BRIDGE_BUILD_TIME
+    std::println("Build Time: {}", SUB_BRIDGE_BUILD_TIME);
+#endif
     std::println("Repository: https://github.com/Murchiz/Subs-converter");
 }
 
@@ -91,7 +96,7 @@ void dev_gather() {
     reg_sz(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SystemInformation", "SystemProductName", prod, sizeof(prod));
 
     if (mfr[0] && prod[0]) {
-        std::string model = std::format("{} {}", mfr, prod);
+        std::string model = std::format("{} {}", std::string_view(mfr), std::string_view(prod));
         safe_strncpy(g_Dev.model, model.c_str());
     } else if (prod[0]) {
         safe_strncpy(g_Dev.model, prod);
@@ -195,6 +200,12 @@ void load_config() {
                 char *context = nullptr;
                 char *tok = safe_crt::strtok_s_wrapper(converts, ", \t", &context);
                 while (tok) {
+                    if (!is_supported_target(tok)) {
+                        std::println(stderr, "Skipping unsupported conversion target: {}", std::string_view(tok));
+                        ++c_idx; // Do not shift the ports of later configured targets.
+                        tok = safe_crt::strtok_s_wrapper(nullptr, ", \t", &context);
+                        continue;
+                    }
                     if (g_RouteCount >= 64) break;
                     Route *rc = &g_Routes[g_RouteCount++];
                     rc->local_port = port + c_idx;
@@ -383,9 +394,9 @@ void run_console() {
     SetConsoleCtrlHandler(con_ctrl, TRUE);
 
     std::println("\n  SubBridge & Subconverter - console mode");
-    std::println("  HWID:   {}", g_Dev.hwid);
-    std::println("  OS:     {} {}", g_Dev.os, g_Dev.ver);
-    std::println("  Model:  {}\n", g_Dev.model);
+    std::println("  HWID:   {}", std::string_view(g_Dev.hwid));
+    std::println("  OS:     {} {}", std::string_view(g_Dev.os), std::string_view(g_Dev.ver));
+    std::println("  Model:  {}\n", std::string_view(g_Dev.model));
 
     server_loop();
     std::println("\nStopped.");
@@ -548,9 +559,9 @@ void run_console() {
     signal(SIGTERM, sig_handler);
 
     std::println("\n  SubBridge & Subconverter - console mode");
-    std::println("  HWID:   {}", g_Dev.hwid);
-    std::println("  OS:     {} {}", g_Dev.os, g_Dev.ver);
-    std::println("  Model:  {}\n", g_Dev.model);
+    std::println("  HWID:   {}", std::string_view(g_Dev.hwid));
+    std::println("  OS:     {} {}", std::string_view(g_Dev.os), std::string_view(g_Dev.ver));
+    std::println("  Model:  {}\n", std::string_view(g_Dev.model));
 
     server_loop();
     std::println("\nStopped.");
@@ -576,17 +587,20 @@ void print_help(std::string_view prog_cmd) {
     std::println("  xray                              Base64-encoded V2Ray / Xray link list");
     std::println("  xray-one                          Single consolidated Xray JSON config");
     std::println("  xray-jsons                        Array of individual Xray JSON configs ([...])");
-    std::println("  xray-mixed                        Experimental raw JSON + links (client import unverified)");
     std::println("  v2ray                             Base64-encoded V2Ray link list");
 }
 
 int run_convert(int argc, char **argv) {
     if (argc < 4) {
         std::println("Usage: sub_bridge --convert <target> <url> [output_file] [--force-balancer]");
-        std::println("Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, xray-mixed, v2ray");
+        std::println("Targets: clash, singbox-android, singbox-pc, xray, xray-one, xray-jsons, v2ray");
         return 1;
     }
     std::string target = argv[2];
+    if (!is_supported_target(target)) {
+        std::println(stderr, "Unsupported conversion target: {}", target);
+        return 1;
+    }
     std::string url = argv[3];
     std::string outfile = "output.txt";
     int force_balancer = 0;
@@ -639,8 +653,6 @@ int run_convert(int argc, char **argv) {
                 out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, force_balancer);
             } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
                 out_payload = gen_xray(all_proxies, "", all_rules);
-            } else if (target == "xray-mixed") {
-                out_payload = gen_xray_mixed(all_proxies, all_balancers, all_rules);
             } else if (target == "xray-jsons") {
                 out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
             } else {
