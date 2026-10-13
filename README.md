@@ -24,7 +24,8 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
     - `v2ray`: Base64-encoded V2Ray link list
   - Full routing rule extraction and conversion between Xray/Sing-box rules and Clash rule sets.
 - **Smart Balancer Handling & Deduplication**:
-  - Automatically identifies and preserves upstream subscription balancers (e.g. leastPing urltest groups).
+  - Automatically identifies upstream subscription balancers (e.g. leastPing urltest groups).
+  - `xray-jsons` preserves original Xray balancer configs intact, including strategy settings (such as `leastLoad`), selectors, routing, fallback and observatory settings. Rules from other aggregated subscriptions do not overwrite those configs.
   - Eliminates duplicate node tags (e.g. `proxy-2`) by mapping balancer members to their respective proxy nodes.
   - Intelligently omits redundant auto-balancer groups if upstream balancers already cover all nodes.
   - Optional `force_balancer` flag to force SubBridge's generic `Auto` group alongside upstream balancers.
@@ -47,10 +48,12 @@ It parses and normalizes diverse proxy subscription formats and protocols (VLESS
 - **Ninja** (recommended)
 - **C++23 Compiler**:
   - **Windows**: Visual Studio 2022 / MSVC
-  - **Linux**: GCC 14+ or Clang 18+
+  - **Linux**: GCC 14+ or Clang with a C++23-capable standard library (including `<format>` and `<print>`)
 - **Linux Build Dependencies**:
   - `libcurl` development package (e.g. `sudo apt install -y libcurl4-openssl-dev ninja-build`)
 - **Python 3** (optional, for YAML tests)
+
+CMake requires C++23 with compiler extensions disabled and checks the required standard-library features at configure time. Builds use strict conformance diagnostics (`-pedantic-errors` on GCC/Clang, `/permissive-` on MSVC). Native tests keep assertions enabled in all build configurations, including Release/CI.
 
 ### Build with CMake Presets (Recommended)
 
@@ -164,6 +167,18 @@ Convert any subscription URL or local file directly into a target configuration:
 ./sub_bridge --convert clash "https://example.com/sub" clash_config.yaml --force-balancer
 ```
 
+XHTTP VLESS/Trojan links preserve both `mode` and URL-encoded `extra`. In particular, `uplinkDataPlacement=header` requires `mode=packet-up`; dropping the mode can cause Xray to reject the resulting configuration.
+
+#### Hysteria and Xray JSON output
+
+Hysteria 2 nodes use Xray's native `"protocol": "hysteria"` and `"network": "hysteria"`, with `version: 2` in both the outbound settings and `hysteriaSettings`. They are not converted to VLESS. When the source is a native Xray Hysteria 2 outbound, its complete `streamSettings` is retained, including authentication, TLS options, and `finalmask.quicParams`. URI/normalized Hysteria 2 inputs get native settings with TLS and a default `h3` ALPN; Salamander obfuscation is emitted as a UDP finalmask.
+
+This preserves the outbound, not the entire source profile: DNS, inbounds, and routing still follow the selected target's existing generation behavior. Xray-specific settings without share-link equivalents are preserved by JSON output, not guaranteed by link-only output.
+
+Xray's native Hysteria implementation requires version 2. Attempting to synthesize a Hysteria 1 node in an Xray JSON target now fails explicitly (nonzero CLI exit or HTTP 422), rather than silently generating VLESS. Hysteria 1 link output remains available through `xray`/`v2ray`.
+
+Unknown conversion targets are rejected: CLI conversion exits nonzero, HTTP conversion returns 400, and unsupported entries in `converts` are skipped with a warning. Skipped entries retain their port slot so later configured endpoints do not move.
+
 ### 4. Help & Version
 ```bash
 ./sub_bridge --help
@@ -190,6 +205,9 @@ ctest --preset release --output-on-failure
 
 Tests include:
 - `ParserTest`: URI parsing, Base64 decoding, Xray JSON & gRPC node validation, balancer deduplication, Sing-box 1.14+ syntax, and `xray-jsons` generation
+- `XrayTest`: Component generation, empty-input handling, XHTTP mode/extra round trips, and upstream balancer preservation when aggregating with unrelated gRPC nodes
+- `XrayFidelityTest`: Offline CLI validation using an independent JSON parser and sanitized `leastLoad`, Hysteria 2, and gRPC Reality fixtures; not a client import test
+- `HttpTargetTest` (POSIX): HTTP rejection of unsupported targets and success checks for supported targets using local fixtures, without a listening server
 - `YamlTest`: Native Clash YAML node extraction, sanitization, and rule conversion
 - `PythonYamlTest`: Reference YAML test verification
 

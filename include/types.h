@@ -31,44 +31,8 @@ typedef unsigned int DWORD;
 #include <cstddef>
 #include <cstdint>
 #include <format>
-
-#if __has_include(<print>)
 #include <print>
-#else
-#include <iostream>
-#include <cstdio>
 #include <utility>
-
-namespace std {
-
-template <typename... Args>
-inline void print(std::format_string<Args...> fmt, Args&&... args) {
-    std::cout << std::format(fmt, std::forward<Args>(args)...);
-}
-
-template <typename... Args>
-inline void print(std::FILE* stream, std::format_string<Args...> fmt, Args&&... args) {
-    std::string s = std::format(fmt, std::forward<Args>(args)...);
-    std::fwrite(s.data(), 1, s.size(), stream);
-}
-
-template <typename... Args>
-inline void println(std::format_string<Args...> fmt, Args&&... args) {
-    std::cout << std::format(fmt, std::forward<Args>(args)...) << '\n';
-}
-
-template <typename... Args>
-inline void println(std::FILE* stream, std::format_string<Args...> fmt, Args&&... args) {
-    std::string s = std::format(fmt, std::forward<Args>(args)...) + '\n';
-    std::fwrite(s.data(), 1, s.size(), stream);
-}
-
-inline void println() {
-    std::cout << '\n';
-}
-
-} // namespace std
-#endif
 
 inline constexpr const char* SVC_NAME = "SubBridge";
 inline constexpr const char* SVC_DISPLAY = "Subscription Converter Bridge";
@@ -116,6 +80,9 @@ struct Balancer {
     char name[128]{};
     char type[32]{};
     std::vector<std::string> proxies{};
+    // Retain upstream Xray configs intact for JSON output. The normalized
+    // member list alone cannot represent strategies, selectors or routing.
+    std::string xray_config{};
 };
 
 struct Rule {
@@ -151,6 +118,8 @@ struct Proxy {
     char obfs_pass[128]{};
     char up[32]{};
     char down[32]{};
+    // Native Xray Hysteria stream options that have no lossless generic mapping.
+    std::string xray_stream_settings{};
 };
 
 extern Route g_Routes[64];

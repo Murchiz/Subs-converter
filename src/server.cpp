@@ -12,6 +12,7 @@
 #include <string_view>
 #include <algorithm>
 #include <memory>
+#include <stdexcept>
 
 #ifndef _WIN32
 #include <curl/curl.h>
@@ -439,10 +440,10 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
 
     struct curl_slist *headers = nullptr;
     if (rt && rt->use_hwid) {
-        headers = curl_slist_append(headers, std::format("x-hwid: {}", g_Dev.hwid).c_str());
-        headers = curl_slist_append(headers, std::format("x-device-os: {}", g_Dev.os).c_str());
-        headers = curl_slist_append(headers, std::format("x-ver-os: {}", g_Dev.ver).c_str());
-        headers = curl_slist_append(headers, std::format("x-device-model: {}", g_Dev.model).c_str());
+        headers = curl_slist_append(headers, std::format("x-hwid: {}", std::string_view(g_Dev.hwid)).c_str());
+        headers = curl_slist_append(headers, std::format("x-device-os: {}", std::string_view(g_Dev.os)).c_str());
+        headers = curl_slist_append(headers, std::format("x-ver-os: {}", std::string_view(g_Dev.ver)).c_str());
+        headers = curl_slist_append(headers, std::format("x-device-model: {}", std::string_view(g_Dev.model)).c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     }
 
@@ -472,6 +473,15 @@ int fetch_url(const Route *rt, char *buf, int cap, const wchar_t* custom_ua, int
 #endif
 
 static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::string& target, int log_port) {
+    if (!target.empty() && !is_supported_target(target)) {
+        constexpr std::string_view message = "Unsupported conversion target\n";
+        const std::string response = std::format(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n"
+            "Content-Length: {}\r\nConnection: close\r\n\r\n{}", message.size(), message);
+        send(c, response.data(), static_cast<int>(response.size()), 0);
+        logm("  [FAIL] Port %d -> 400 Unsupported Conversion Target\n", log_port);
+        return;
+    }
     char *body = static_cast<char *>(mem_alloc(BODY_CAP));
     if (!body) {
         constexpr std::string_view e = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOOM";
@@ -518,26 +528,39 @@ static void serve_converted_or_raw(SOCKET c, const Route *source_rt, const std::
 
     if (success_count > 0) {
         std::string content_type;
-        if (target == "clash") {
-            out_payload = gen_clash(all_proxies, all_rules, all_balancers, source_rt->force_balancer);
-            content_type = converted_content_type(target);
-        } else if (target == "singbox-pc" || target == "sing-box-pc") {
-            out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, source_rt->force_balancer);
-            content_type = converted_content_type(target);
-        } else if (target == "singbox-android" || target == "sing-box-android") {
-            out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, source_rt->force_balancer);
-            content_type = converted_content_type(target);
-        } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
-            out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
-            content_type = converted_content_type(target);
-        } else if (target == "xray-jsons") {
-            out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
-            content_type = converted_content_type(target);
-        } else if (target == "xray" || target == "v2ray" || !target.empty()) {
-            out_payload = gen_v2ray(all_proxies);
-            content_type = converted_content_type(target);
-        } else {
-            content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
+        try {
+            if (target == "clash") {
+                out_payload = gen_clash(all_proxies, all_rules, all_balancers, source_rt->force_balancer);
+                content_type = converted_content_type(target);
+            } else if (target == "singbox-pc" || target == "sing-box-pc") {
+                out_payload = gen_singbox(all_proxies, "pc", all_rules, all_balancers, source_rt->force_balancer);
+                content_type = converted_content_type(target);
+            } else if (target == "singbox-android" || target == "sing-box-android") {
+                out_payload = gen_singbox(all_proxies, "android", all_rules, all_balancers, source_rt->force_balancer);
+                content_type = converted_content_type(target);
+            } else if (target == "xray-one" || target == "xray-json" || target == "v2ray-json") {
+                out_payload = gen_xray(all_proxies, source_rt->name, all_rules);
+                content_type = converted_content_type(target);
+            } else if (target == "xray-jsons") {
+                out_payload = gen_xray_jsons(all_proxies, all_balancers, all_rules);
+                content_type = converted_content_type(target);
+            } else if (target == "xray" || target == "v2ray") {
+                out_payload = gen_v2ray(all_proxies);
+                content_type = converted_content_type(target);
+            } else {
+                content_type = meta.content_type[0] ? header_safe(meta.content_type) : "text/plain; charset=utf-8";
+            }
+        } catch (const std::invalid_argument& e) {
+            const std::string message = std::string(e.what()) + "\n";
+            const std::string response = std::format(
+                "HTTP/1.1 422 Unprocessable Content\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                "Content-Length: {}\r\nConnection: close\r\n\r\n{}", message.size(), message);
+            send(c, response.data(), static_cast<int>(response.size()), 0);
+            logm("  [FAIL] Port %d (target=%s) -> 422 Conversion Failed: %s\n\n",
+                 log_port, target.c_str(), e.what());
+            mem_free(body);
+            return;
         }
 
         apply_route_name(meta, source_rt->name);

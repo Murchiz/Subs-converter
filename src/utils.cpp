@@ -51,7 +51,7 @@ std::string utf16_to_utf8(uint32_t cp) {
 std::string base64_decode(std::string_view in) {
     std::string out;
     out.reserve(in.size() * 3 / 4);
-    int val = 0;
+    std::uint32_t val = 0;
     int valb = -8;
     for (char c : in) {
         int8_t d = B64_DECODE_TABLE[static_cast<unsigned char>(c)];
@@ -95,7 +95,7 @@ std::string url_decode(std::string_view str) {
 std::string base64_encode(std::string_view in) {
     std::string out;
     out.reserve((in.size() + 2) / 3 * 4);
-    int val = 0;
+    std::uint32_t val = 0;
     int valb = -6;
     for (unsigned char c : in) {
         val = (val << 8) + c;
@@ -182,6 +182,45 @@ std::string json_extract_string(std::string_view json, std::string_view key) {
         return decode_json_string(json.substr(quote1 + 1, quote2 - quote1 - 1));
     }
     return "";
+}
+
+std::string_view json_extract_object(std::string_view json, std::string_view key) {
+    auto string_end = [&](size_t start) {
+        for (size_t i = start + 1; i < json.size(); ++i) {
+            if (json[i] == '\\') ++i;
+            else if (json[i] == '"') return i;
+        }
+        return std::string_view::npos;
+    };
+    int depth = 0;
+    for (size_t i = 0; i < json.size(); ++i) {
+        if (json[i] == '{') ++depth;
+        else if (json[i] == '}') --depth;
+        else if (json[i] == '"') {
+            const size_t end = string_end(i);
+            if (end == std::string_view::npos) return {};
+            if (depth == 1 && json.substr(i + 1, end - i - 1) == key) {
+                size_t start = json.find_first_not_of(" \t\r\n", end + 1);
+                if (start != std::string_view::npos && json[start] == ':') {
+                    start = json.find_first_not_of(" \t\r\n", start + 1);
+                    if (start == std::string_view::npos || json[start] != '{') return {};
+                    int object_depth = 0;
+                    for (size_t j = start; j < json.size(); ++j) {
+                        if (json[j] == '"') {
+                            j = string_end(j);
+                            if (j == std::string_view::npos) return {};
+                        } else if (json[j] == '{') ++object_depth;
+                        else if (json[j] == '}' && --object_depth == 0) {
+                            return json.substr(start, j - start + 1);
+                        }
+                    }
+                    return {};
+                }
+            }
+            i = end;
+        }
+    }
+    return {};
 }
 
 int json_extract_int(std::string_view json, std::string_view key) {

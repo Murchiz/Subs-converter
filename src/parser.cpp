@@ -193,7 +193,10 @@ static Proxy parse_xray_outbound_obj(std::string_view outbound, std::string_view
         proto = "hysteria2";
     }
     safe_strncpy(p.protocol, proto.c_str());
-    
+    if (proto == "hysteria2" && json_extract_string(outbound, "protocol") == "hysteria") {
+        p.xray_stream_settings = json_extract_object(outbound, "streamSettings");
+    }
+
     std::string tag = json_extract_string(outbound, "tag");
     if (!tag.empty() && tag != "proxy") {
         safe_strncpy(p.name, tag.c_str());
@@ -855,6 +858,7 @@ std::vector<Balancer> parse_balancers(std::string_view decoded, const std::vecto
                 Balancer b{};
                 safe_strncpy(b.name, remarks.c_str());
                 safe_strncpy(b.type, "url-test");
+                b.xray_config = std::string(config_obj);
 
                 size_t outbounds_pos = config_obj.find("\"outbounds\"");
                 if (outbounds_pos != std::string_view::npos) {
@@ -1105,8 +1109,10 @@ std::vector<Rule> parse_xray_rules(std::string_view json) {
     }
 
     std::vector<Rule> rules;
-    size_t r_pos = json.find("\"routing\"");
-    if (r_pos == std::string_view::npos) r_pos = json.find("\"rules\"");
+    // routing.balancers may precede routing.rules; locate the rules key before
+    // looking for its array rather than taking the first array in routing.
+    const size_t routing_pos = json.find("\"routing\"");
+    size_t r_pos = json.find("\"rules\"", routing_pos == std::string_view::npos ? 0 : routing_pos);
     if (r_pos == std::string_view::npos) return rules;
 
     size_t array_start = json.find('[', r_pos);

@@ -14,6 +14,11 @@ void test_base64() {
     std::string encoded = "SGVsbG8gV29ybGQ="; // "Hello World"
     std::string decoded = base64_decode(encoded);
     assert(decoded == "Hello World");
+    std::string binary;
+    for (unsigned value = 0; value < 256; ++value) binary.push_back(static_cast<char>(value));
+    assert(base64_decode(base64_encode(binary)) == binary);
+    assert(base64_encode("").empty());
+    assert(base64_decode("").empty());
     std::println("test_base64 passed.");
 }
 
@@ -140,7 +145,7 @@ void test_rules() {
     std::println("Parsed {} rules from original.json:", rules.size());
     for (size_t i = 0; i < rules.size(); i++) {
         std::println(" Rule #{}: outbound={}, domains={}, ips={}, protocols={}, port={}",
-                     i, rules[i].outbound, rules[i].domains.size(),
+                     i, std::string_view(rules[i].outbound), rules[i].domains.size(),
                      rules[i].ips.size(), rules[i].protocols.size(), rules[i].port);
     }
     
@@ -407,6 +412,11 @@ void test_balancers_and_xray_jsons() {
     assert(balancers[0].proxies[0] == "Server Germany");
     assert(balancers[0].proxies[1] == "Server Netherlands");
     assert(proxies.size() == 2);
+    // rules must not be confused with the preceding balancers array.
+    assert(rules.size() == 3);
+    assert(rules[0].protocols == std::vector<std::string>{"bittorrent"});
+    assert(rules[1].domains == std::vector<std::string>{"geosite:category-ru"});
+    assert(rules[2].ips == std::vector<std::string>{"geoip:ru"});
 
     for (const auto& p : proxies) {
         std::string_view name = p.name;
