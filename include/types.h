@@ -110,7 +110,7 @@ struct Proxy {
     char path[128]{};
     char host[128]{};
     char alterId[16]{};
-    char cipher[32]{};
+    char cipher[4096]{};
     char alpn[64]{};
     char mode[32]{};
     char extra[4096]{};

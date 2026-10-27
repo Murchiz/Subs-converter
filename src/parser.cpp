@@ -466,6 +466,7 @@ static Proxy parse_clash_node(std::string_view node_str) {
 
     std::string cipher = yaml_get_val(node_str, "cipher");
     if (cipher.empty()) cipher = yaml_get_val(node_str, "method");
+    if (cipher.empty()) cipher = yaml_get_val(node_str, "encryption");
     safe_strncpy(p.cipher, cipher.c_str());
 
     std::string net = yaml_get_val(node_str, "network");

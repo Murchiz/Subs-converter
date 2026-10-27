@@ -21,7 +21,7 @@ namespace safe_crt {
 
 inline int strncpy_s_wrapper(char *dest, size_t destsz, const char *src, size_t count) noexcept {
 #ifdef _MSC_VER
-    return strncpy_s(dest, destsz, src, count);
+    return strncpy_s(dest, destsz, src, count == destsz - 1 ? _TRUNCATE : count);
 #else
     if (!dest || destsz == 0) return -1;
     if (count == 0) {

@@ -177,7 +177,11 @@ std::string json_extract_string(std::string_view json, std::string_view key) {
     if (pos == std::string_view::npos) return "";
     size_t quote1 = json.find('"', pos);
     if (quote1 == std::string_view::npos) return "";
-    size_t quote2 = json.find('"', quote1 + 1);
+    size_t quote2 = std::string_view::npos;
+    for (size_t i = quote1 + 1; i < json.size(); ++i) {
+        if (json[i] == '\\') ++i;
+        else if (json[i] == '"') { quote2 = i; break; }
+    }
     if (quote2 != std::string_view::npos) {
         return decode_json_string(json.substr(quote1 + 1, quote2 - quote1 - 1));
     }

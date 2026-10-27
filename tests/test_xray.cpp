@@ -211,7 +211,79 @@ void test_json_object_extraction() {
     std::println("test_json_object_extraction passed.");
 }
 
+void test_vless_encryption() {
+    const std::string pq_encryption = "mlkem768x25519plus.native.0rtt.dummy-key-for-test";
+    const std::string config = std::format(R"json({{
+      "remarks": "PQ-VLESS",
+      "outbounds": [{{
+        "tag": "proxy",
+        "protocol": "vless",
+        "settings": {{
+          "vnext": [{{
+            "address": "example.com",
+            "port": 443,
+            "users": [{{
+              "id": "40688376-ebc9-4782-8f72-1db90fbfe66d",
+              "encryption": "{}",
+              "flow": "xtls-rprx-vision"
+            }}]
+          }}]
+        }},
+        "streamSettings": {{
+          "network": "tcp",
+          "security": "reality",
+          "realitySettings": {{
+            "serverName": "example.com",
+            "publicKey": "dummy-pbk",
+            "fingerprint": "firefox"
+          }}
+        }}
+      }}]
+    }})json", pq_encryption);
+
+    Proxy p = parse_xray_json(config);
+    assert(std::string_view(p.protocol) == "vless");
+    assert(std::string_view(p.cipher) == pq_encryption);
+
+    // Test gen_share_links / gen_v2ray
+    std::string b64 = gen_v2ray({p});
+    std::string link = base64_decode(b64);
+    assert(link.contains("encryption=" + pq_encryption + "&"));
+
+    // Roundtrip via parse_uri
+    if (link.back() == '\n') link.pop_back();
+    Proxy p_from_link = parse_uri(link);
+    assert(std::string_view(p_from_link.cipher) == pq_encryption);
+
+    // Test gen_xray output preserves encryption
+    std::string json_out = gen_xray({p});
+    assert(json_out.contains("\"encryption\": \"" + pq_encryption + "\""));
+
+    // Test gen_clash preserves encryption
+    std::string clash_out = gen_clash({p}, {});
+    assert(clash_out.contains("encryption: \"" + pq_encryption + "\""));
+
+    // Roundtrip via parse_clash_yaml
+    std::vector<Proxy> p_from_clash = parse_proxies(clash_out);
+    assert(!p_from_clash.empty());
+    assert(std::string_view(p_from_clash[0].cipher) == pq_encryption);
+
+    // Test default "none" encryption when empty or "none"
+    Proxy p_none{};
+    strcpy(p_none.protocol, "vless");
+    strcpy(p_none.server, "example.com");
+    strcpy(p_none.uuid, "40688376-ebc9-4782-8f72-1db90fbfe66d");
+    p_none.port = 443;
+    std::string none_link = base64_decode(gen_v2ray({p_none}));
+    assert(none_link.contains("encryption=none&"));
+    std::string none_json = gen_xray({p_none});
+    assert(none_json.contains("\"encryption\": \"none\""));
+
+    std::println("test_vless_encryption passed.");
+}
+
 int main() {
+    test_vless_encryption();
     test_share_links();
     test_xhttp_share_links();
     test_upstream_balancer_fidelity();

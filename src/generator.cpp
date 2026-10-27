@@ -39,6 +39,9 @@ std::string gen_clash(const std::vector<Proxy>& proxies, const std::vector<Rule>
                 if (p.flow[0]) {
                     out += std::format("    flow: {}\n", std::string_view(p.flow));
                 }
+                if (p.cipher[0] && strcmp(p.cipher, "none") != 0) {
+                    out += std::format("    encryption: \"{}\"\n", sanitize_json(p.cipher));
+                }
             }
         } else if (proto == "trojan") {
             out += std::format("    password: {}\n"
@@ -618,7 +621,8 @@ static std::string format_xray_proxy_outbound(const Proxy& p, std::string_view t
                            "{}            \"id\": \"{}\"",
                            indent, indent, indent, indent, std::string_view(p.server), indent, p.port, indent, indent, indent, std::string_view(p.uuid));
         if (proto == "vless") {
-            out += std::format(",\n{}            \"encryption\": \"none\"", indent);
+            std::string enc = p.cipher[0] ? sanitize_json(p.cipher) : "none";
+            out += std::format(",\n{}            \"encryption\": \"{}\"", indent, enc);
             if (p.flow[0]) out += std::format(",\n{}            \"flow\": \"{}\"", indent, std::string_view(p.flow));
         } else if (proto == "vmess") {
             int alt = (p.alterId[0]) ? atoi(p.alterId) : 0;
@@ -882,7 +886,10 @@ static std::string gen_share_links(const std::vector<Proxy>& proxies) {
         std::string_view proto = p.protocol;
         if (proto == "vless" || proto == "trojan") {
             std::string uri = std::format("{}://{}@{}:{}?", std::string_view(p.protocol), std::string_view(p.uuid), std::string_view(p.server), p.port);
-            if (proto == "vless") uri += "encryption=none&";
+            if (proto == "vless") {
+                std::string enc = (p.cipher[0] && strcmp(p.cipher, "none") != 0) ? url_encode(p.cipher) : "none";
+                uri += std::format("encryption={}&", enc);
+            }
             
             std::string net = p.type[0] ? p.type : "tcp";
             if (net == "httpupgrade") net = "ws";
